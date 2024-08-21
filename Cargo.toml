@@ -1,0 +1,11 @@
+[package]
+name = "trans-misja"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gio = "0.19.5"
+gtk4 = "0.8.2"
+hound = "3.5.1"
+log = "0.4.22"
+rayon = "1.10.0"
