@@ -1,6 +1,11 @@
-use crate::wav::load_wav_file;
+use std::env;
+use crate::wav::compute_signal;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
+
+pub struct GLOBALS {
+    pub debug: bool,
+}
 
 fn load_css() {
     // Get the color scheme from the settings
@@ -33,6 +38,19 @@ fn load_css() {
 
 pub fn build_ui(app: &gtk4::Application) {
     load_css();
+
+    // Get the debug flag from the environment
+    let mut debug: bool = false;
+    let key: &str = "DEBUG";
+    if env::var_os(key).is_some() {
+        if let Ok(val) = env::var(key) {
+            debug = val == "1";
+        }
+    }
+    let globals: GLOBALS = GLOBALS {
+        debug
+    };
+
     // Text box with path
     let text_box = gtk4::Entry::new();
     text_box.set_placeholder_text(Some("Select a WAV file..."));
@@ -75,7 +93,7 @@ pub fn build_ui(app: &gtk4::Application) {
     button_procede.connect_clicked(glib::clone!(@weak app, @weak text_box => move |_| {
         let filename = text_box.text();
         if !filename.is_empty() {
-            load_wav_file(filename.as_str());
+            compute_signal(filename.as_str(), &globals);
         }
     }));
 
