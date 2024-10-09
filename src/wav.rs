@@ -3,7 +3,7 @@ use hound::WavReader;
 use image::{GrayImage, ImageBuffer, Luma};
 use plotly::{Plot, Scatter};
 
-pub fn compute_signal(filepath: &str, globals: &GLOBALS) {
+pub fn compute_signal(filepath: &str, globals: &GLOBALS) -> String {
     /*
         Loading wav files with hound
     */
@@ -87,7 +87,9 @@ pub fn compute_signal(filepath: &str, globals: &GLOBALS) {
 
     // let synced_signal = sync(&am_signal);
 
-    generate_image(&am_signal, frequency);
+    let path = generate_image(&am_signal, frequency);
+
+    return path;
 }
 
 fn sync(signal: &Vec<f32>) -> Vec<f32> {
@@ -128,7 +130,7 @@ fn am_demodulation(signal: &Vec<f32>, frequency: f32) -> Vec<f32> {
     am_signal
 }
 
-fn generate_image(signal: &Vec<f32>, frequency: f32) {
+fn generate_image(signal: &Vec<f32>, frequency: f32) -> String {
     let frame_width = (frequency * 0.5) as u32;
     println!("Frame width: {}", frame_width);
     let w = frame_width;
@@ -173,4 +175,6 @@ fn generate_image(signal: &Vec<f32>, frequency: f32) {
     img = img_resized;
 
     img.save("image.png").unwrap();
+
+    String::from("image.png")
 }

@@ -2,6 +2,7 @@ use std::env;
 use crate::wav::compute_signal;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
+use gtk4::prelude::WidgetExt;
 
 pub struct GLOBALS {
     pub debug: bool,
@@ -89,13 +90,10 @@ pub fn build_ui(app: &gtk4::Application) {
         dialog.show();
     }));
 
-    // Connect the button to the load_wav_file function
-    button_procede.connect_clicked(glib::clone!(@weak app, @weak text_box => move |_| {
-        let filename = text_box.text();
-        if !filename.is_empty() {
-            compute_signal(filename.as_str(), &globals);
-        }
-    }));
+    let main_grid_box = gtk4::Grid::new();
+    main_grid_box.set_row_spacing(12);
+    main_grid_box.set_column_spacing(12);
+    main_grid_box.set_column_homogeneous(false);
 
     // Create a GridBox
     let grid_box = gtk4::Grid::new();
@@ -107,20 +105,64 @@ pub fn build_ui(app: &gtk4::Application) {
     grid_box.set_column_spacing(12);
     grid_box.set_column_homogeneous(true);
 
+    // ********************************
+    // TODO: Move button_procede to the bottom of the window
+    // ********************************
+    
     // Add widgets to the GridBox
     grid_box.attach(&text_box, 0, 0, 2, 1);
     grid_box.attach(&button, 2, 0, 1, 1);
     grid_box.attach(&button_procede, 0, 1, 3, 1);
 
+    // Limit the size of the GridBox
+    grid_box.set_halign(gtk4::Align::Start);
+    grid_box.set_valign(gtk4::Align::Start);
+    grid_box.set_hexpand(false);
+    grid_box.set_vexpand(false);
+
+    main_grid_box.attach(&grid_box, 0, 0, 1, 1);
+
+    // Connect the button to the load_wav_file function
+    button_procede.connect_clicked(glib::clone!(@weak app, @weak text_box, @weak main_grid_box => move |_| {
+        let mut path: String = String::new();
+        let filename = text_box.text();
+        if !filename.is_empty() {
+            path = compute_signal(filename.as_str(), &globals);
+        }
+        if!path.is_empty() {
+            // ********************************
+            // TODO: Fix image expansion to the whole available space
+            // ********************************
+            
+            // Create a new image and add it to the main grid box
+            let img = gtk4::Image::new();
+            img.set_from_file(Some(path));
+            img.set_halign(gtk4::Align::Fill);
+            img.set_valign(gtk4::Align::Fill);
+            img.set_hexpand(true);
+            img.set_vexpand(true);
+            
+            let img_grid_box = gtk4::Grid::new();
+            img_grid_box.set_column_homogeneous(true);
+            img_grid_box.set_row_homogeneous(true);
+            img_grid_box.set_halign(gtk4::Align::Fill);
+            img_grid_box.set_valign(gtk4::Align::Fill);
+            img_grid_box.set_hexpand(true);
+            img_grid_box.set_vexpand(true);
+
+            img_grid_box.attach(&img, 0, 0, 1, 1);
+            main_grid_box.attach(&img_grid_box, 1, 0, 1, 1);
+
+            main_grid_box.show();
+        }
+    }));
 
     // Create a window
     let window = gtk4::ApplicationWindow::builder()
         .application(app)
         .title("trans-misja")
-        .child(&grid_box)
+        .child(&main_grid_box)
         .build();
-
-    window.set_default_size(500, 100);
 
     // Present the window
     window.present();
