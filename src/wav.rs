@@ -68,11 +68,13 @@ pub fn compute_signal(filepath: &str, globals: &GLOBALS) -> String {
 
     let ratio = target_sample_rate as f64 / spec.sample_rate as f64;
 
-    let mut resampled_samples = Vec::new();
+    let mut resampled_samples: Vec<f32> = Vec::new();
     for i in 0..(samples.len() as f64 * ratio) as usize {
         let index = (i as f64 / ratio) as usize;
         if index < samples.len() {
-            resampled_samples.push(samples[index]);
+            let x = (i as f64 / ratio) as f64 - index as f64;
+            let y: f32 = samples[index] as f32 + x as f32 * ((samples[index + 1] as f32) - (samples[index] as f32));
+            resampled_samples.push(y);
         }
     }
 
@@ -83,8 +85,18 @@ pub fn compute_signal(filepath: &str, globals: &GLOBALS) -> String {
     println!("(...)");
 
     let frequency = target_sample_rate as f32;
-    let am_signal = am_demodulation(&resampled_samples, frequency);
+    
+    println!("Demodulating...");
+    let am_signal = envelope_detection(&resampled_samples);
 
+    // **************
+    // TODO: Delete this later
+    // **************
+    // let am_signal = am_demodulation2(&resampled_samples, frequency);
+    // println!("Hilbert...");
+    // let am_signal = hilbert(&resampled_samples.into_iter().map(|x| x as f64).collect::<Vec<f64>>());
+    // println!("Normalized...");
+    // let am_envelope: Vec<f32> = am_signal.iter().map(|x| x.norm() as f32).collect();
     // let synced_signal = sync(&am_signal);
 
     let path = generate_image(&am_signal, frequency);
@@ -117,17 +129,59 @@ fn sync(signal: &Vec<f32>) -> Vec<f32> {
     sync_signal
 }
 
-fn am_demodulation(signal: &Vec<f32>, frequency: f32) -> Vec<f32> {
-    let mut am_signal = Vec::new();
-    for i in 1..signal.len() {
-        am_signal.push(
-            (f32::sqrt(
-                f32::powi(signal[i], 2) + f32::powi(signal[i - 1], 2)
-                    - 2.0 * signal[i] * signal[i - 1] * f32::cos(frequency),
-            )) / f32::sin(frequency),
-        )
+
+// **************
+// TODO: Delete this later
+// **************
+// fn am_demodulation(signal: &Vec<f32>, frequency: f32) -> Vec<f32> {
+//     let mut am_signal = Vec::new();
+//     for i in 1..signal.len() {
+//         am_signal.push(
+//             (f32::sqrt(
+//                 f32::powi(signal[i], 2) + f32::powi(signal[i - 1], 2)
+//                     - 2.0 * signal[i] * signal[i - 1] * f32::cos(frequency),
+//             )) / f32::sin(frequency),
+//         )
+//     }
+//     am_signal
+// }
+
+// **************
+// TODO: Delete this later
+// **************
+// fn am_demodulation2(signal: &Vec<f32>, frequency: f32) -> Vec<f32> {
+//     let lo_freq = frequency * 0.9;
+//     let lo_signal: Vec<f32> = (0..signal.len()).map(|x| (2.0 * std::f32::consts::PI * lo_freq * x as f32).sin()).collect();
+
+//     let product: Vec<f32> = signal.iter().zip(lo_signal.iter()).map(|(x, y)| x * y).collect();
+
+//     let mut filtered_product = Vec::with_capacity(product.len());
+//     let filter_coeff = [1.0, -0.5, 0.25];
+//     for i in 0..product.len() {
+//         let mut sum = 0.0;
+//         for j in 0..filter_coeff.len() {
+//             sum += product[(i + j) % product.len()] * filter_coeff[j];
+//         }
+//         filtered_product.push(sum);
+//     }
+
+//     filtered_product
+// }
+
+fn envelope_detection(signal: &Vec<f32>) -> Vec<f32> {
+    let mut envelope: Vec<f32> = Vec::new();
+    let window_size = 10; // adjust this value to change the smoothing amount
+    let scaling_factor: f32 = 2.0; // adjust this value to change the brightness
+    for i in 0..signal.len() {
+        let mut max: f32 = 0.0; // specify the type of max explicitly
+        for j in 0..window_size {
+            if i + j < signal.len() {
+                max = max.max(signal[i + j].abs());
+            }
+        }
+        envelope.push(max * scaling_factor);
     }
-    am_signal
+    envelope
 }
 
 fn generate_image(signal: &Vec<f32>, frequency: f32) -> String {
