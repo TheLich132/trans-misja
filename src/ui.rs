@@ -48,21 +48,19 @@ pub fn build_ui(app: &gtk4::Application) {
             debug = val == "1";
         }
     }
-    let globals: GLOBALS = GLOBALS {
-        debug
-    };
+    let globals: GLOBALS = GLOBALS { debug };
 
     // Text box with path
     let text_box = gtk4::Entry::new();
     text_box.set_placeholder_text(Some("Select a WAV file..."));
 
-    // Create button "Procede"
-    let button_procede: gtk4::Button = gtk4::Button::with_label("Procede");
-    button_procede.set_sensitive(false);
+    // Create button "Proceed"
+    let button_proceed: gtk4::Button = gtk4::Button::with_label("Proceed");
+    button_proceed.set_sensitive(false);
 
     // Create a button
-    let button = gtk4::Button::with_label("Open File");
-    button.connect_clicked(glib::clone!(@weak app, @weak text_box, @weak button_procede => move |_| {
+    let button_open_file = gtk4::Button::with_label("Open File");
+    button_open_file.connect_clicked(glib::clone!(@weak app, @weak text_box, @weak button_proceed => move |_| {
         // Create a file chooser dialog
         let dialog = gtk4::FileChooserDialog::new(
             Some("Select a WAV file"),
@@ -81,7 +79,7 @@ pub fn build_ui(app: &gtk4::Application) {
                 if let Some(file) = dialog.file() {
                     if let Some(path) = file.path() {
                         text_box.set_text(path.to_str().unwrap());
-                        button_procede.set_sensitive(true);
+                        button_proceed.set_sensitive(true);
                     }
                 }
             }
@@ -90,80 +88,86 @@ pub fn build_ui(app: &gtk4::Application) {
         dialog.show();
     }));
 
-    let main_grid_box = gtk4::Grid::new();
-    main_grid_box.set_row_spacing(12);
-    main_grid_box.set_column_spacing(12);
-    main_grid_box.set_column_homogeneous(false);
+    // Main vertical box to organize layout
+    let main_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+    // Make the window, grid, and all child widgets expand fully
+    main_vbox.set_hexpand(true);
+    main_vbox.set_vexpand(true);
 
-    // Create a GridBox
-    let grid_box = gtk4::Grid::new();
-    grid_box.set_margin_top(12);
-    grid_box.set_margin_bottom(12);
-    grid_box.set_margin_start(12);
-    grid_box.set_margin_end(12);
-    grid_box.set_row_spacing(12);
-    grid_box.set_column_spacing(12);
-    grid_box.set_column_homogeneous(true);
+    // Grid layout for the top part (text_box and buttons)
+    let top_grid = gtk4::Grid::new();
+    top_grid.set_column_spacing(12);
+    top_grid.set_row_spacing(12);
+    top_grid.set_margin_top(12);
+    top_grid.set_margin_bottom(12);
+    top_grid.set_margin_start(12);
+    top_grid.set_margin_end(12);
 
-    // ********************************
-    // TODO: Move button_procede to the bottom of the window
-    // ********************************
-    
-    // Add widgets to the GridBox
-    grid_box.attach(&text_box, 0, 0, 2, 1);
-    grid_box.attach(&button, 2, 0, 1, 1);
-    grid_box.attach(&button_procede, 0, 1, 3, 1);
+    // Add text_box to the first column, spanning most of the width
+    top_grid.attach(&text_box, 0, 0, 1, 1);
+    text_box.set_hexpand(true); // Expand to full available width
 
-    // Limit the size of the GridBox
-    grid_box.set_halign(gtk4::Align::Start);
-    grid_box.set_valign(gtk4::Align::Start);
-    grid_box.set_hexpand(false);
-    grid_box.set_vexpand(false);
+    // Add button next to the text_box
+    top_grid.attach(&button_open_file, 1, 0, 1, 1);
+    button_open_file.set_hexpand(false); // Do not expand as much as text_box
 
-    main_grid_box.attach(&grid_box, 0, 0, 1, 1);
+    // Add button_proceed below button
+    top_grid.attach(&button_proceed, 1, 1, 1, 1);
 
-    // Connect the button to the load_wav_file function
-    button_procede.connect_clicked(glib::clone!(@weak app, @weak text_box, @weak main_grid_box => move |_| {
+    // Add the top_grid to the main_vbox
+    main_vbox.append(&top_grid);
+
+    // Create a box for the image (bottom section)
+    let image_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+    image_box.set_hexpand(true);
+    image_box.set_vexpand(true);
+
+    // Add image_box to the main_vbox (bottom section)
+    main_vbox.append(&image_box);
+
+    // Connect the button to the compute signal function
+    button_proceed.connect_clicked(glib::clone!(@weak app, @weak text_box, @weak image_box => move |_| {
         let mut path: String = String::new();
         let filename = text_box.text();
         if !filename.is_empty() {
             path = compute_signal(filename.as_str(), &globals);
         }
-        if!path.is_empty() {
-            // ********************************
-            // TODO: Fix image expansion to the whole available space
-            // ********************************
-            
-            // Create a new image and add it to the main grid box
+        if !path.is_empty() {
+            // **************
+            // TODO: Fix image displaying size to fit screen
+            // **************
+
+            // Create a new image and add it to the image_box
             let img = gtk4::Image::new();
             img.set_from_file(Some(path));
-            img.set_halign(gtk4::Align::Fill);
-            img.set_valign(gtk4::Align::Fill);
+    
+            // Make the image expand to the full available space
             img.set_hexpand(true);
             img.set_vexpand(true);
-            
-            let img_grid_box = gtk4::Grid::new();
-            img_grid_box.set_column_homogeneous(true);
-            img_grid_box.set_row_homogeneous(true);
-            img_grid_box.set_halign(gtk4::Align::Fill);
-            img_grid_box.set_valign(gtk4::Align::Fill);
-            img_grid_box.set_hexpand(true);
-            img_grid_box.set_vexpand(true);
-
-            img_grid_box.attach(&img, 0, 0, 1, 1);
-            main_grid_box.attach(&img_grid_box, 1, 0, 1, 1);
-
-            main_grid_box.show();
+            img.set_halign(gtk4::Align::Fill);
+            img.set_valign(gtk4::Align::Fill);
+    
+            // Make sure the image box also expands
+            image_box.set_hexpand(true);
+            image_box.set_vexpand(true);
+            image_box.set_halign(gtk4::Align::Fill);
+            image_box.set_valign(gtk4::Align::Fill);
+    
+            image_box.append(&img);
+    
+            // Show the updated layout
+            image_box.show();
         }
-    }));
+    }));    
 
-    // Create a window
+    // Create a window and add the main_vbox as the child
     let window = gtk4::ApplicationWindow::builder()
         .application(app)
         .title("trans-misja")
-        .child(&main_grid_box)
+        .child(&main_vbox)
         .build();
 
-    // Present the window
+    window.set_default_size(800, 600); // Optional: Set a default size for the window
+
     window.present();
 }
