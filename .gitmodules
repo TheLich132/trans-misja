@@ -1,0 +1,3 @@
+[submodule "noaa_u-net_pytorch"]
+	path = noaa_u-net_pytorch
+	url = https://github.com/TheLich132/noaa_u-net_pytorch
