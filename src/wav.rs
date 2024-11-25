@@ -70,17 +70,19 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool) -> String {
     println!("Demodulating...");
     let am_signal = envelope_detection(&filtered_signal);
 
-    let mut synced_signal = am_signal.clone();
     // APT Signal sync
     if *sync {
         println!("Syncing...");
         let frame_width = (frequency * 0.5) as usize;
-        synced_signal = sync_apt(&am_signal, frame_width);
+        // Generate sync template from the first few frames
+        let synced_signal = sync_apt(&am_signal, frame_width);
+
+        let path = generate_image(&synced_signal, frequency);
+        return path;
+    } else {
+        let path = generate_image(&am_signal, frequency);
+        return path;
     }
-
-    let path = generate_image(&synced_signal, frequency);
-
-    return path;
 }
 
 fn resample_signal(samples: Vec<f32>, ratio: f64) -> Vec<f32> {
@@ -125,37 +127,64 @@ fn normalize_image(image: &mut GrayImage) {
 
 fn sync_apt(signal: &Vec<f32>, frame_width: usize) -> Vec<f32> {
     let mut synced_signal = Vec::with_capacity(signal.len());
-    let mut line_start = 0;
-    let search_width = 50; // Search window width for sync impulse
 
-    while line_start + frame_width <= signal.len() {
-        // Search for sync impulse in small window at the start of the line
-        let mut max_val = f32::MIN;
-        let mut max_pos = 0;
-        let search_end = (line_start + search_width).min(signal.len());
+    // Generate the sync pattern template
+    let sync_template = generate_sync_template(frame_width);
 
-        for i in line_start..search_end {
-            if signal[i] > max_val {
-                max_val = signal[i];
-                max_pos = i;
-            }
-        }
+    // Find the position of the sync marker
+    let sync_pos = find_sync_position(signal, &sync_template);
+    println!("Sync position: {}", sync_pos);
 
-        // Calculate offset for this line
-        let offset = max_pos - line_start;
-
-        // Copy the line with offset
-        for i in 0..frame_width {
-            let src_pos = line_start + ((i + offset) % frame_width);
-            if src_pos < signal.len() {
-                synced_signal.push(signal[src_pos]);
-            }
-        }
-
-        line_start += frame_width;
+    // Rotate the signal to align the sync marker
+    for i in sync_pos..signal.len() {
+        synced_signal.push(signal[i]);
+    }
+    for i in 0..sync_pos {
+        synced_signal.push(signal[i]);
     }
 
     synced_signal
+}
+
+fn generate_sync_template(frame_width: usize) -> Vec<f32> {
+    let samples_per_wedge = frame_width / 39;
+    let mut sync_template = Vec::with_capacity(frame_width);
+
+    for _ in 0..8 {
+        for _ in 0..samples_per_wedge {
+            sync_template.push(1.0);
+        }
+        for _ in 0..samples_per_wedge {
+            sync_template.push(0.0);
+        }
+    }
+
+    sync_template
+}
+
+fn find_sync_position(signal: &Vec<f32>, sync_template: &Vec<f32>) -> usize {
+    let mut max_correlation = f32::MIN;
+    let mut best_position = 0;
+
+    for i in 0..(signal.len() - sync_template.len()) {
+        let mut correlation = 0.0;
+        for (j, &template_value) in sync_template.iter().enumerate() {
+            if i + j < signal.len() {
+                correlation += if (signal[i + j] > 0.5) == (template_value > 0.5) {
+                    1.0
+                } else {
+                    0.0
+                };
+            }
+        }
+
+        if correlation > max_correlation {
+            max_correlation = correlation;
+            best_position = i;
+        }
+    }
+
+    best_position
 }
 
 fn envelope_detection(signal: &Vec<f32>) -> Vec<f32> {
