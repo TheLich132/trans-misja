@@ -74,8 +74,21 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool) -> String {
     if *sync {
         println!("Syncing...");
         let frame_width = (frequency * 0.5) as usize;
-        // Generate sync template from the first few frames
-        let synced_signal = sync_apt(&am_signal, frame_width);
+        
+        // Sync pattern for APT signal
+        // [..WW..WW..WW..WW..WW..WW..WW........]
+        let sync_pattern = vec![
+            -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, -1.0, -1.0,
+            -1.0, -1.0, -1.0, -1.0,
+        ];
+        let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern);
 
         let path = generate_image(&synced_signal, frequency);
         return path;
@@ -125,66 +138,94 @@ fn normalize_image(image: &mut GrayImage) {
     }
 }
 
-fn sync_apt(signal: &Vec<f32>, frame_width: usize) -> Vec<f32> {
-    let mut synced_signal = Vec::with_capacity(signal.len());
+fn find_sync_position(signal: &[f32], sync_pattern: &[f32]) -> usize {
+    let sync_len = sync_pattern.len();
+    let signal_len = signal.len();
+    let mut best_offset = 0;
+    let mut best_score = f32::MIN;
 
-    // Generate the sync pattern template
-    let sync_template = generate_sync_template(frame_width);
+    for offset in 0..=(signal_len - sync_len) {
+        let mut score = 0.0;
+        let mut signal_energy = 0.0;
+        let mut pattern_energy = 0.0;
 
-    // Find the position of the sync marker
-    let sync_pos = find_sync_position(signal, &sync_template);
-    println!("Sync position: {}", sync_pos);
-
-    // Rotate the signal to align the sync marker
-    for i in sync_pos..signal.len() {
-        synced_signal.push(signal[i]);
-    }
-    for i in 0..sync_pos {
-        synced_signal.push(signal[i]);
-    }
-
-    synced_signal
-}
-
-fn generate_sync_template(frame_width: usize) -> Vec<f32> {
-    let samples_per_wedge = frame_width / 39;
-    let mut sync_template = Vec::with_capacity(frame_width);
-
-    for _ in 0..8 {
-        for _ in 0..samples_per_wedge {
-            sync_template.push(1.0);
+        for i in 0..sync_len {
+            score += signal[offset + i] * sync_pattern[i];
+            signal_energy += signal[offset + i] * signal[offset + i];
+            pattern_energy += sync_pattern[i] * sync_pattern[i];
         }
-        for _ in 0..samples_per_wedge {
-            sync_template.push(0.0);
+
+        let normalized_score = score / (signal_energy.sqrt() * pattern_energy.sqrt());
+        if normalized_score > best_score {
+            best_score = normalized_score;
+            best_offset = offset;
         }
     }
 
-    sync_template
+    best_offset
 }
 
-fn find_sync_position(signal: &Vec<f32>, sync_template: &Vec<f32>) -> usize {
-    let mut max_correlation = f32::MIN;
-    let mut best_position = 0;
+fn sync_apt(signal: &Vec<f32>, frame_width: usize, sync_pattern: &[f32]) -> Vec<f32> {
+    let mut synced = Vec::with_capacity(signal.len());
+    let rows = signal.len() / frame_width;
+    let additional_offset = 120; // Adjust this value as needed
 
-    for i in 0..(signal.len() - sync_template.len()) {
-        let mut correlation = 0.0;
-        for (j, &template_value) in sync_template.iter().enumerate() {
-            if i + j < signal.len() {
-                correlation += if (signal[i + j] > 0.5) == (template_value > 0.5) {
-                    1.0
-                } else {
-                    0.0
-                };
+    for r in 0..rows {
+        let row_start = r * frame_width;
+        let row_end = row_start + frame_width.min(signal.len() - row_start);
+        let row_slice = &signal[row_start..row_end];
+
+        // Find best correlation offset using find_sync_position
+        let best_offset = find_sync_position(row_slice, sync_pattern);
+
+        // Fine-tune the alignment by checking a small range around the best offset
+        let fine_tune_range = 5;
+        let mut fine_tuned_offset = best_offset;
+        let mut best_fine_tuned_score = f32::MIN;
+        let mut weighted_sum = 0.0;
+        let mut weight_total = 0.0;
+
+        for offset in (best_offset.saturating_sub(fine_tune_range))..=(best_offset + fine_tune_range).min(row_slice.len() - sync_pattern.len()) {
+            let mut score = 0.0;
+            let mut signal_energy = 0.0;
+            let mut pattern_energy = 0.0;
+
+            for i in 0..sync_pattern.len() {
+                score += row_slice[offset + i] * sync_pattern[i];
+                signal_energy += row_slice[offset + i] * row_slice[offset + i];
+                pattern_energy += sync_pattern[i] * sync_pattern[i];
             }
+
+            let normalized_score = score / (signal_energy.sqrt() * pattern_energy.sqrt());
+            if normalized_score > best_fine_tuned_score {
+                best_fine_tuned_score = normalized_score;
+                fine_tuned_offset = offset;
+            }
+
+            // Calculate weighted sum for fine-tuning
+            weighted_sum += offset as f32 * normalized_score;
+            weight_total += normalized_score;
         }
 
-        if correlation > max_correlation {
-            max_correlation = correlation;
-            best_position = i;
+        // Calculate weighted average offset
+        if weight_total > 0.0 {
+            fine_tuned_offset = (weighted_sum / weight_total).round() as usize;
+        }
+
+        // Add additional offset to ensure the row starts with sync A bar
+        fine_tuned_offset = fine_tuned_offset.saturating_sub(additional_offset).min(row_slice.len());
+
+        // Circular shift from fine-tuned offset
+        println!("Best offset: {}, Fine-tuned offset: {}", best_offset, fine_tuned_offset);
+        for i in fine_tuned_offset..row_slice.len() {
+            synced.push(row_slice[i]);
+        }
+        for i in 0..fine_tuned_offset {
+            synced.push(row_slice[i]);
         }
     }
 
-    best_position
+    synced
 }
 
 fn envelope_detection(signal: &Vec<f32>) -> Vec<f32> {
