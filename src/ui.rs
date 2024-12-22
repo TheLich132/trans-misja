@@ -131,7 +131,8 @@ pub fn build_ui(app: &gtk4::Application) {
         if !filename.is_empty() {
             let path = compute_signal(&filename, &debug, &sync_clone.get(), &use_model_clone.get());
             if !path.is_empty() {
-                picture_widget.set_file(Some());
+                let file = gio::File::for_path(&path);
+                picture_widget.set_file(Some(&file));
             }
         }
     }));
