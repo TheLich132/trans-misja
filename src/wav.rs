@@ -1,5 +1,8 @@
 use hound::WavReader;
-use image::{GrayImage, ImageBuffer, Luma};
+use image::{GrayImage, ImageBuffer, Luma, GenericImageView};
+use tract_onnx::prelude::*;
+use rayon::prelude::*;
+use std::sync::Mutex;
 
 pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &bool) -> String {
     println!("Debug: {}, Sync: {}, Use model: {}", debug, sync, use_model);
@@ -71,6 +74,7 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
     let am_signal = envelope_detection(&filtered_signal);
 
     // APT Signal sync
+    let path: String;
     if *sync {
         println!("Syncing...");
         let frame_width = (frequency * 0.5) as usize;
@@ -90,11 +94,18 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
         ];
         let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern);
 
-        let path = generate_image(&synced_signal, frequency);
-        return path;
+        path = generate_image(&synced_signal, frequency);
     } else {
-        let path = generate_image(&am_signal, frequency);
-        return path;
+        path = generate_image(&am_signal, frequency);
+    }
+
+    if *use_model {
+        println!("Enhancing image...");
+        let model_path = "model.onnx";
+        let enhanced_image_path = enhance_image_with_model(&path, model_path).unwrap();
+        enhanced_image_path
+    } else {
+        path
     }
 }
 
@@ -293,4 +304,61 @@ fn generate_image(signal: &Vec<f32>, frequency: f32) -> String {
     img.save("image.png").unwrap();
 
     String::from("image.png")
+}
+
+fn enhance_image_with_model(image_path: &str, model_path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Load the ONNX model
+    let model = tract_onnx::onnx()
+        .model_for_path(model_path)?
+        .with_input_fact(0, InferenceFact::dt_shape(f32::datum_type(), tvec![1, 1, 256, 256]))?
+        .into_optimized()?
+        .into_runnable()?;
+
+    // Load and preprocess the image
+    let image = image::open(image_path)?.to_luma8();
+    let (width, height) = image.dimensions();
+    let patch_size = 256;
+    let step_size = patch_size;
+
+    // Create a blank output image
+    let output_image = Mutex::new(GrayImage::new(width, height));
+
+    // Process patches in parallel
+    (0..height).into_par_iter().step_by(step_size).for_each(|i| {
+        (0..width).into_par_iter().step_by(step_size).for_each(|j| {
+            println!("Processing patch at ({}, {})", j, i);
+            // Extract the patch from the image
+            let patch = image.view(j as u32, i as u32, (patch_size as u32).min((width - j) as u32), (patch_size as u32).min((height - i) as u32)).to_image();
+
+            // Pad the patch to the full patch size if necessary
+            let mut padded_patch = GrayImage::new(patch_size as u32, patch_size as u32);
+            for y in 0..patch.height() {
+                for x in 0..patch.width() {
+                    padded_patch.put_pixel(x, y, *patch.get_pixel(x, y));
+                }
+            }
+
+            // Convert the patch to a tensor
+            let tensor: Tensor = tract_ndarray::Array4::from_shape_fn((1, 1, patch_size, patch_size), |(_, _, y, x)| {
+                padded_patch.get_pixel(x as u32, y as u32).0[0] as f32 / 255.0
+            }).into();
+
+            // Run the model
+            let result = model.run(tvec!(tensor.into())).unwrap();
+            let output_patch: tract_ndarray::ArrayView4<f32> = result[0].to_array_view::<f32>().unwrap().into_dimensionality().unwrap();
+
+            // Copy the output patch to the output image
+            let mut output_image = output_image.lock().unwrap();
+            for y in 0..patch.height() {
+                for x in 0..patch.width() {
+                    let value = (output_patch[[0, 0, y as usize, x as usize]] * 255.0).round() as u8;
+                    output_image.put_pixel(j + x, i + y, Luma([value]));
+                }
+            }
+        });
+    });
+
+    output_image.lock().unwrap().save("enhanced_image.png").unwrap();
+
+    Ok(String::from("enhanced_image.png"))
 }
