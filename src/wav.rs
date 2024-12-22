@@ -1,8 +1,8 @@
 use hound::WavReader;
 use image::{GrayImage, ImageBuffer, Luma};
 
-pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool) -> String {
-    println!("Debug: {}, Sync: {}", debug, sync);
+pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &bool) -> String {
+    println!("Debug: {}, Sync: {}, Use model: {}", debug, sync, use_model);
 
     /*
         Loading wav files with hound

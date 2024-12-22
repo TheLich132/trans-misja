@@ -35,6 +35,7 @@ pub fn build_ui(app: &gtk4::Application) {
 
     let debug: bool = env::var("DEBUG").map_or(false, |v| v == "1");
     let sync = Rc::new(Cell::new(false));
+    let use_model = Rc::new(Cell::new(false));
 
     let text_box = gtk4::Entry::new();
     text_box.set_placeholder_text(Some("Select a WAV file..."));
@@ -77,6 +78,15 @@ pub fn build_ui(app: &gtk4::Application) {
         println!("Sync: {}", checkbox_sync.is_active());
         sync_clone.set(checkbox_sync.is_active());
     });
+
+    let checkbox_use_model = gtk4::CheckButton::with_label("Enhance image");
+    checkbox_use_model.set_active(false);
+
+    let use_model_clone = Rc::clone(&use_model);
+    checkbox_use_model.connect_toggled(move |checkbox_use_model| {
+        println!("Enhance image: {}", checkbox_use_model.is_active());
+        use_model_clone.set(checkbox_use_model.is_active());
+    });
     
     let main_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     main_vbox.set_hexpand(true);
@@ -90,53 +100,38 @@ pub fn build_ui(app: &gtk4::Application) {
     top_grid.set_margin_start(12);
     top_grid.set_margin_end(12);
 
-    top_grid.attach(&text_box, 0, 0, 1, 1);
+    top_grid.attach(&text_box, 0, 0, 2, 1);
     text_box.set_hexpand(true);
 
-    top_grid.attach(&button_open_file, 1, 0, 1, 1);
+    top_grid.attach(&button_open_file, 2, 0, 1, 1);
     button_open_file.set_hexpand(false);
 
-    top_grid.attach(&button_proceed, 1, 1, 1, 1);
-    top_grid.attach(&checkbox_sync, 0, 1, 1, 1);
+    let checkbox_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+    checkbox_box.append(&checkbox_sync);
+    checkbox_box.append(&checkbox_use_model);
+
+    top_grid.attach(&button_proceed, 2, 1, 1, 1);
+    top_grid.attach(&checkbox_box, 0, 1, 2, 1);
 
     main_vbox.append(&top_grid);
 
-    let image_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
-    image_box.set_hexpand(true);
-    image_box.set_vexpand(true);
-    main_vbox.append(&image_box);
+    // Create an picture widget
+    let picture_widget = gtk4::Picture::new(); 
+    picture_widget.set_hexpand(true);
+    picture_widget.set_vexpand(true);
+
+    // Add the picture widget to the main vbox
+    main_vbox.append(&picture_widget);
 
     // Po kliknięciu przycisku "Proceed" wywołaj compute_signal z globals
     let sync_clone = Rc::clone(&sync);
-    button_proceed.connect_clicked(glib::clone!(@weak text_box, @weak image_box, @strong debug, @weak sync_clone => move |_| {
+    let use_model_clone = Rc::clone(&use_model);
+    button_proceed.connect_clicked(glib::clone!(@weak text_box, @weak picture_widget, @strong debug, @weak sync_clone, @weak use_model_clone => move |_| {
         let filename = text_box.text();
         if !filename.is_empty() {
-            let path = compute_signal(&filename, &debug, &sync_clone.get());
+            let path = compute_signal(&filename, &debug, &sync_clone.get(), &use_model_clone.get());
             if !path.is_empty() {
-                // Clear the image_box by removing all children
-                if let Some(mut child) = image_box.first_child() {
-                    while let Some(next) = child.next_sibling() {
-                        image_box.remove(&child);
-                        child = next;
-                    }
-                    // Remove the last remaining child
-                    image_box.remove(&child);
-                }
-    
-                let img = gtk4::Image::new();
-                img.set_from_file(Some(path));
-                img.set_hexpand(true);
-                img.set_vexpand(true);
-                img.set_halign(gtk4::Align::Fill);
-                img.set_valign(gtk4::Align::Fill);
-    
-                image_box.set_hexpand(true);
-                image_box.set_vexpand(true);
-                image_box.set_halign(gtk4::Align::Fill);
-                image_box.set_valign(gtk4::Align::Fill);
-    
-                image_box.append(&img);
-                image_box.show();
+                picture_widget.set_file(Some());
             }
         }
     }));
