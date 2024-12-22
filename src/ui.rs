@@ -1,5 +1,6 @@
 use std::env;
 use crate::wav::compute_signal;
+use glib_macros::clone;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
 use std::cell::Cell;
@@ -44,23 +45,24 @@ pub fn build_ui(app: &gtk4::Application) {
     button_proceed.set_sensitive(false);
 
     let button_open_file = gtk4::Button::with_label("Open File");
-    button_open_file.connect_clicked(glib::clone!(@weak app, @weak text_box, @weak button_proceed => move |_| {
+    button_open_file.connect_clicked(clone!(#[strong] text_box, #[weak] button_proceed, move |_| {
         let dialog = gtk4::FileChooserDialog::new(
             Some("Select a WAV file"),
-            Some(&app.active_window().unwrap()),
+            Some(&gtk4::Window::default()),
             gtk4::FileChooserAction::Open,
             &[("Open", gtk4::ResponseType::Ok), ("Cancel", gtk4::ResponseType::Cancel)],
         );
+        dialog.set_modal(true);
         dialog.set_select_multiple(false);
         let filter = gtk4::FileFilter::new();
         filter.set_name(Some("WAV files"));
         filter.add_mime_type("audio/x-wav");
         dialog.add_filter(&filter);
-        dialog.connect_response(glib::clone!(@weak app, @weak text_box, @weak button_proceed => move |dialog, response| {
+        dialog.connect_response(clone!(#[strong] text_box, #[weak] button_proceed, move |dialog, response| {
             if response == gtk4::ResponseType::Ok {
                 if let Some(file) = dialog.file() {
                     if let Some(path) = file.path() {
-                        text_box.set_text(path.to_str().unwrap());
+                        text_box.set_text(&path.to_string_lossy());
                         button_proceed.set_sensitive(true); // Upewnij się, że przycisk jest włączony po wyborze pliku
                     }
                 }
@@ -126,7 +128,7 @@ pub fn build_ui(app: &gtk4::Application) {
     // Po kliknięciu przycisku "Proceed" wywołaj compute_signal z globals
     let sync_clone = Rc::clone(&sync);
     let use_model_clone = Rc::clone(&use_model);
-    button_proceed.connect_clicked(glib::clone!(@weak text_box, @weak picture_widget, @strong debug, @weak sync_clone, @weak use_model_clone => move |_| {
+    button_proceed.connect_clicked(clone!(#[weak] text_box, #[weak] picture_widget, #[strong] debug, #[weak] sync_clone, #[weak] use_model_clone, move |_| {
         let filename = text_box.text();
         if !filename.is_empty() {
             let path = compute_signal(&filename, &debug, &sync_clone.get(), &use_model_clone.get());
