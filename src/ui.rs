@@ -125,13 +125,25 @@ pub fn build_ui(app: &gtk4::Application) {
     // Add the picture widget to the main vbox
     main_vbox.append(&picture_widget);
 
+    // Create a progress bar
+    let progress_bar = gtk4::ProgressBar::new();
+    progress_bar.set_margin_bottom(12);
+    progress_bar.set_margin_start(12);
+    progress_bar.set_margin_end(12);
+    progress_bar.set_hexpand(true);
+    progress_bar.set_vexpand(false);
+    progress_bar.set_show_text(true);
+
+    // Add the progress bar to the main vbox
+    main_vbox.append(&progress_bar);
+
     // Po kliknięciu przycisku "Proceed" wywołaj compute_signal z globals
     let sync_clone = Rc::clone(&sync);
     let use_model_clone = Rc::clone(&use_model);
-    button_proceed.connect_clicked(clone!(#[weak] text_box, #[weak] picture_widget, #[strong] debug, #[weak] sync_clone, #[weak] use_model_clone, move |_| {
+    button_proceed.connect_clicked(clone!(#[weak] text_box, #[weak] picture_widget, #[strong] debug, #[weak] sync_clone, #[weak] use_model_clone, #[weak] progress_bar, move |_| {
         let filename = text_box.text();
         if !filename.is_empty() {
-            let path = compute_signal(&filename, &debug, &sync_clone.get(), &use_model_clone.get());
+            let path = compute_signal(&filename, &debug, &sync_clone.get(), &use_model_clone.get(), &progress_bar);
             if !path.is_empty() {
                 let file = gio::File::for_path(&path);
                 picture_widget.set_file(Some(&file));

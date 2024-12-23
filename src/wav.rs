@@ -3,9 +3,14 @@ use image::{GrayImage, ImageBuffer, Luma, GenericImageView};
 use tract_onnx::prelude::*;
 use rayon::prelude::*;
 use std::sync::Mutex;
+use gtk4::ProgressBar;
 
-pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &bool) -> String {
+pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &bool, progress_bar: &ProgressBar) -> String {
     println!("Debug: {}, Sync: {}, Use model: {}", debug, sync, use_model);
+
+    // Update progress bar
+    progress_bar.set_fraction(0.1);
+    progress_bar.set_text(Some("Loading WAV file..."));
 
     /*
         Loading wav files with hound
@@ -50,6 +55,10 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
         }
     }
 
+    // Update progress bar
+    progress_bar.set_fraction(0.3);
+    progress_bar.set_text(Some("Processing samples..."));
+
     println!("Samples: {}", samples.len());
     for sample in samples.iter().take(100) {
         print!("{}, ", sample);
@@ -59,6 +68,10 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
     // Resampling
     let ratio = target_sample_rate as f64 / spec.sample_rate as f64;
     let resampled_samples = resample_signal(samples, ratio);
+
+    // Update progress bar
+    progress_bar.set_fraction(0.5);
+    progress_bar.set_text(Some("Resampling..."));
 
     println!("Resampled samples: {}", resampled_samples.len());
     for sample in resampled_samples.iter().take(100) {
@@ -70,8 +83,16 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
 
     let filtered_signal = low_pass_filter(&resampled_samples, 5000.0, frequency);
 
+    // Update progress bar
+    progress_bar.set_fraction(0.7);
+    progress_bar.set_text(Some("Filtering signal..."));
+
     println!("Demodulating...");
     let am_signal = envelope_detection(&filtered_signal);
+
+    // Update progress bar
+    progress_bar.set_fraction(0.8);
+    progress_bar.set_text(Some("Demodulating..."));
 
     // APT Signal sync
     let path: String;
@@ -99,12 +120,20 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
         path = generate_image(&am_signal, frequency);
     }
 
+    // Update progress bar
+    progress_bar.set_fraction(0.9);
+    progress_bar.set_text(Some("Generating image..."));
+
     if *use_model {
         println!("Enhancing image...");
         let model_path = "model.onnx";
         let enhanced_image_path = enhance_image_with_model(&path, model_path).unwrap();
+        progress_bar.set_fraction(1.0);
+        progress_bar.set_text(Some("Enhancement complete"));
         enhanced_image_path
     } else {
+        progress_bar.set_fraction(1.0);
+        progress_bar.set_text(Some("Processing complete"));
         path
     }
 }
