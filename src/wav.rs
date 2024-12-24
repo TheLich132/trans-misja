@@ -1,11 +1,17 @@
-use hound::WavReader;
-use image::{GrayImage, ImageBuffer, Luma, GenericImageView};
-use tract_onnx::prelude::*;
-use rayon::prelude::*;
-use std::sync::Mutex;
 use gtk4::ProgressBar;
+use hound::WavReader;
+use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
+use rayon::prelude::*;
+use std::{error::Error, sync::Mutex};
+use tract_onnx::prelude::*;
 
-pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &bool, progress_bar: &ProgressBar) -> String {
+pub fn compute_signal(
+    filepath: &str,
+    debug: &bool,
+    sync: &bool,
+    use_model: &bool,
+    progress_bar: &ProgressBar,
+) -> String {
     println!("Debug: {}, Sync: {}, Use model: {}", debug, sync, use_model);
 
     // Update progress bar
@@ -28,30 +34,34 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
 
     let mut samples: Vec<f32> = Vec::new();
     if spec.sample_format == hound::SampleFormat::Float {
-        let samples_float = reader
+        let samples_float = match reader
             .samples::<f32>()
             .collect::<Result<Vec<f32>, hound::Error>>()
-            .unwrap();
-        let channels = spec.channels as usize;
-        let mut i = 0;
-        while i < samples_float.len() {
-            if i % channels == 0 {
-                samples.push(samples_float[i]);
+        {
+            Ok(samples) => samples,
+            Err(e) => {
+                eprintln!("Error reading samples: {}", e);
+                return String::from("Error reading samples");
             }
-            i += 1;
+        };
+        let channels = spec.channels as usize;
+        for i in (0..samples_float.len()).step_by(channels) {
+            samples.push(samples_float[i]);
         }
     } else if spec.sample_format == hound::SampleFormat::Int {
-        let samples_int = reader
-            .samples::<i16>()
-            .collect::<Result<Vec<i16>, hound::Error>>()
-            .unwrap();
-        let channels = spec.channels as usize;
-        let mut i = 0;
-        while i < samples_int.len() {
-            if i % channels == 0 {
-                samples.push(samples_int[i] as f32);
+        let samples_int = match reader
+            .samples::<i32>()
+            .collect::<Result<Vec<i32>, hound::Error>>()
+        {
+            Ok(samples) => samples,
+            Err(e) => {
+                eprintln!("Error reading samples: {}", e);
+                return String::from("Error reading samples");
             }
-            i += 1;
+        };
+        let channels = spec.channels as usize;
+        for i in (0..samples_int.len()).step_by(channels) {
+            samples.push(samples_int[i] as f32);
         }
     }
 
@@ -88,7 +98,7 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
     progress_bar.set_text(Some("Filtering signal..."));
 
     println!("Demodulating...");
-    let am_signal = envelope_detection(&filtered_signal);
+    let am_signal = envelope_detection(&filtered_signal, 10, 2.0);
 
     // Update progress bar
     progress_bar.set_fraction(0.8);
@@ -99,25 +109,31 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
     if *sync {
         println!("Syncing...");
         let frame_width = (frequency * 0.5) as usize;
-        
+
         // Sync pattern for APT signal
         // [..WW..WW..WW..WW..WW..WW..WW........]
         let sync_pattern = vec![
-            -1.0, -1.0, 1.0, 1.0,
-            -1.0, -1.0, 1.0, 1.0,
-            -1.0, -1.0, 1.0, 1.0,
-            -1.0, -1.0, 1.0, 1.0,
-            -1.0, -1.0, 1.0, 1.0,
-            -1.0, -1.0, 1.0, 1.0,
-            -1.0, -1.0, 1.0, 1.0,
-            -1.0, -1.0, -1.0, -1.0,
-            -1.0, -1.0, -1.0, -1.0,
+            -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0,
+            -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0,
+            -1.0, -1.0, -1.0, -1.0, -1.0,
         ];
         let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern);
 
-        path = generate_image(&synced_signal, frequency);
+        path = match generate_image(&synced_signal, frequency, 5) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error generating image: {}", e);
+                return String::from("Error generating image");
+            }
+        };
     } else {
-        path = generate_image(&am_signal, frequency);
+        path = match generate_image(&am_signal, frequency, 5) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error generating image: {}", e);
+                return String::from("Error generating image");
+            }
+        };
     }
 
     // Update progress bar
@@ -139,31 +155,40 @@ pub fn compute_signal(filepath: &str, debug: &bool, sync: &bool, use_model: &boo
 }
 
 fn resample_signal(samples: Vec<f32>, ratio: f64) -> Vec<f32> {
-    let mut resampled_samples: Vec<f32> = Vec::new();
-    for i in 0..(samples.len() as f64 * ratio) as usize {
-        let index = (i as f64 / ratio) as usize;
-        if index < samples.len() {
-            let x = (i as f64 / ratio) as f64 - index as f64;
-            let y: f32 = samples[index] as f32
-                + x as f32 * ((samples[index + 1] as f32) - (samples[index] as f32));
-            resampled_samples.push(y);
-        }
-    }
-    resampled_samples
+    let target_len = (samples.len() as f64 * ratio) as usize;
+    (0..target_len)
+        .filter_map(|i| {
+            let index = (i as f64 / ratio) as usize;
+            if index + 1 >= samples.len() {
+                None
+            } else {
+                let x = (i as f64 / ratio) - index as f64;
+                let y = samples[index] + x as f32 * (samples[index + 1] - samples[index]);
+                Some(y)
+            }
+        })
+        .collect()
 }
 
-fn low_pass_filter(samples: &Vec<f32>, cutoff_freq: f32, sample_rate: f32) -> Vec<f32> {
-    let mut filtered_samples = Vec::with_capacity(samples.len());
+fn low_pass_filter(samples: &[f32], cutoff_freq: f32, sample_rate: f32) -> Vec<f32> {
+    assert!(
+        cutoff_freq > 0.0 && cutoff_freq < sample_rate / 2.0,
+        "Invalid cutoff frequency"
+    );
+    assert!(sample_rate > 0.0, "Sample rate must be positive");
+
     let rc = 1.0 / (cutoff_freq * 2.0 * std::f32::consts::PI);
     let dt = 1.0 / sample_rate;
     let alpha = dt / (rc + dt);
-    let mut prev = samples[0];
 
-    for &sample in samples.iter() {
-        let filtered = prev + alpha * (sample - prev);
-        filtered_samples.push(filtered);
-        prev = filtered;
-    }
+    let filtered_samples: Vec<f32> = samples
+        .iter()
+        .scan(samples[0], |prev, &sample| {
+            let filtered = *prev + alpha * (sample - *prev);
+            *prev = filtered;
+            Some(filtered)
+        })
+        .collect();
 
     filtered_samples
 }
@@ -181,19 +206,25 @@ fn normalize_image(image: &mut GrayImage) {
 fn find_sync_position(signal: &[f32], sync_pattern: &[f32]) -> usize {
     let sync_len = sync_pattern.len();
     let signal_len = signal.len();
+
+    if sync_len == 0 || signal_len == 0 || sync_len > signal_len {
+        return 0; // Return 0 if input is invalid
+    }
+
     let mut best_offset = 0;
     let mut best_score = f32::MIN;
 
     for offset in 0..=(signal_len - sync_len) {
-        let mut score = 0.0;
-        let mut signal_energy = 0.0;
-        let mut pattern_energy = 0.0;
-
-        for i in 0..sync_len {
-            score += signal[offset + i] * sync_pattern[i];
-            signal_energy += signal[offset + i] * signal[offset + i];
-            pattern_energy += sync_pattern[i] * sync_pattern[i];
-        }
+        let (score, signal_energy, pattern_energy) = (0..sync_len).fold(
+            (0.0, 0.0, 0.0),
+            |(score, signal_energy, pattern_energy), i| {
+                (
+                    score + signal[offset + i] * sync_pattern[i],
+                    signal_energy + signal[offset + i] * signal[offset + i],
+                    pattern_energy + sync_pattern[i] * sync_pattern[i],
+                )
+            },
+        );
 
         let normalized_score = score / (signal_energy.sqrt() * pattern_energy.sqrt());
         if normalized_score > best_score {
@@ -208,7 +239,7 @@ fn find_sync_position(signal: &[f32], sync_pattern: &[f32]) -> usize {
 fn sync_apt(signal: &Vec<f32>, frame_width: usize, sync_pattern: &[f32]) -> Vec<f32> {
     let mut synced = Vec::with_capacity(signal.len());
     let rows = signal.len() / frame_width;
-    let additional_offset = 120; // Adjust this value as needed
+    const ADDITIONAL_OFFSET: usize = 120; // Adjust this value as needed
 
     for r in 0..rows {
         let row_start = r * frame_width;
@@ -225,16 +256,19 @@ fn sync_apt(signal: &Vec<f32>, frame_width: usize, sync_pattern: &[f32]) -> Vec<
         let mut weighted_sum = 0.0;
         let mut weight_total = 0.0;
 
-        for offset in (best_offset.saturating_sub(fine_tune_range))..=(best_offset + fine_tune_range).min(row_slice.len() - sync_pattern.len()) {
-            let mut score = 0.0;
-            let mut signal_energy = 0.0;
-            let mut pattern_energy = 0.0;
-
-            for i in 0..sync_pattern.len() {
-                score += row_slice[offset + i] * sync_pattern[i];
-                signal_energy += row_slice[offset + i] * row_slice[offset + i];
-                pattern_energy += sync_pattern[i] * sync_pattern[i];
-            }
+        for offset in (best_offset.saturating_sub(fine_tune_range))
+            ..=(best_offset + fine_tune_range).min(row_slice.len() - sync_pattern.len())
+        {
+            let (score, signal_energy, pattern_energy) = (0..sync_pattern.len()).fold(
+                (0.0, 0.0, 0.0),
+                |(score, signal_energy, pattern_energy), i| {
+                    (
+                        score + row_slice[offset + i] * sync_pattern[i],
+                        signal_energy + row_slice[offset + i] * row_slice[offset + i],
+                        pattern_energy + sync_pattern[i] * sync_pattern[i],
+                    )
+                },
+            );
 
             let normalized_score = score / (signal_energy.sqrt() * pattern_energy.sqrt());
             if normalized_score > best_fine_tuned_score {
@@ -253,38 +287,43 @@ fn sync_apt(signal: &Vec<f32>, frame_width: usize, sync_pattern: &[f32]) -> Vec<
         }
 
         // Add additional offset to ensure the row starts with sync A bar
-        fine_tuned_offset = fine_tuned_offset.saturating_sub(additional_offset).min(row_slice.len());
+        fine_tuned_offset = fine_tuned_offset
+            .saturating_sub(ADDITIONAL_OFFSET)
+            .min(row_slice.len());
 
         // Circular shift from fine-tuned offset
-        println!("Best offset: {}, Fine-tuned offset: {}", best_offset, fine_tuned_offset);
-        for i in fine_tuned_offset..row_slice.len() {
-            synced.push(row_slice[i]);
-        }
-        for i in 0..fine_tuned_offset {
-            synced.push(row_slice[i]);
-        }
+        println!(
+            "Best offset: {}, Fine-tuned offset: {}",
+            best_offset, fine_tuned_offset
+        );
+        synced.extend_from_slice(&row_slice[fine_tuned_offset..]);
+        synced.extend_from_slice(&row_slice[..fine_tuned_offset]);
     }
 
     synced
 }
 
-fn envelope_detection(signal: &Vec<f32>) -> Vec<f32> {
-    let mut envelope: Vec<f32> = Vec::new();
-    let window_size = 10; // adjust this value to change the smoothing amount
-    let scaling_factor: f32 = 2.0; // adjust this value to change the brightness
+fn envelope_detection(signal: &Vec<f32>, window_size: usize, scaling_factor: f32) -> Vec<f32> {
+    let mut envelope: Vec<f32> = Vec::with_capacity(signal.len());
     for i in 0..signal.len() {
         let mut max: f32 = 0.0; // specify the type of max explicitly
-        for j in 0..window_size {
-            if i + j < signal.len() {
-                max = max.max(signal[i + j].abs());
-            }
+        let end = (i + window_size).min(signal.len());
+        for j in i..end {
+            max = max.max(signal[j].abs());
         }
         envelope.push(max * scaling_factor);
     }
     envelope
 }
 
-fn generate_image(signal: &Vec<f32>, frequency: f32) -> String {
+fn generate_image(
+    signal: &Vec<f32>,
+    frequency: f32,
+    reduction_factor: u32,
+) -> Result<String, Box<dyn Error>> {
+    const SCALE_FACTOR: f32 = 32.0;
+    const MAX_LUMINANCE: f32 = 255.0;
+
     let frame_width = (frequency * 0.5) as u32;
     println!("Frame width: {}", frame_width);
     let w = frame_width;
@@ -296,14 +335,9 @@ fn generate_image(signal: &Vec<f32>, frequency: f32) -> String {
     let mut px = 0;
     let mut py = 0;
 
-    for p in 0..signal.len() {
-        let mut lum = signal[p] / 32. - 32.;
-        if lum < 0. {
-            lum = 0.;
-        }
-        if lum > 255. {
-            lum = 255.;
-        }
+    for &sample in signal.iter() {
+        let mut lum = sample / SCALE_FACTOR - SCALE_FACTOR;
+        lum = lum.clamp(0.0, MAX_LUMINANCE);
         img.put_pixel(px, py, Luma([lum as u8]));
         px += 1;
         if px >= w {
@@ -316,13 +350,13 @@ fn generate_image(signal: &Vec<f32>, frequency: f32) -> String {
         }
     }
 
-    // Reduce image width by 5
-    let new_w = w / 5;
+    // Reduce image width by the reduction factor
+    let new_w = w / reduction_factor;
     let mut img_resized: GrayImage = ImageBuffer::new(new_w, h);
 
     for px in 0..new_w {
         for py in 0..h {
-            let orig_px = px * 5;
+            let orig_px = px * reduction_factor;
             img_resized.put_pixel(px, py, *img.get_pixel(orig_px, py));
         }
     }
@@ -330,16 +364,22 @@ fn generate_image(signal: &Vec<f32>, frequency: f32) -> String {
 
     normalize_image(&mut img);
 
-    img.save("image.png").unwrap();
+    img.save("image.png")?;
 
-    String::from("image.png")
+    Ok(String::from("image.png"))
 }
 
-fn enhance_image_with_model(image_path: &str, model_path: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn enhance_image_with_model(
+    image_path: &str,
+    model_path: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     // Load the ONNX model
     let model = tract_onnx::onnx()
         .model_for_path(model_path)?
-        .with_input_fact(0, InferenceFact::dt_shape(f32::datum_type(), tvec![1, 1, 256, 256]))?
+        .with_input_fact(
+            0,
+            InferenceFact::dt_shape(f32::datum_type(), tvec![1, 1, 256, 256]),
+        )?
         .into_optimized()?
         .into_runnable()?;
 
@@ -353,41 +393,62 @@ fn enhance_image_with_model(image_path: &str, model_path: &str) -> Result<String
     let output_image = Mutex::new(GrayImage::new(width, height));
 
     // Process patches in parallel
-    (0..height).into_par_iter().step_by(step_size).for_each(|i| {
-        (0..width).into_par_iter().step_by(step_size).for_each(|j| {
-            println!("Processing patch at ({}, {})", j, i);
-            // Extract the patch from the image
-            let patch = image.view(j as u32, i as u32, (patch_size as u32).min((width - j) as u32), (patch_size as u32).min((height - i) as u32)).to_image();
+    (0..height)
+        .into_par_iter()
+        .step_by(step_size)
+        .for_each(|i| {
+            (0..width).into_par_iter().step_by(step_size).for_each(|j| {
+                println!("Processing patch at ({}, {})", j, i);
+                // Extract the patch from the image
+                let patch = image
+                    .view(
+                        j as u32,
+                        i as u32,
+                        (patch_size as u32).min((width - j) as u32),
+                        (patch_size as u32).min((height - i) as u32),
+                    )
+                    .to_image();
 
-            // Pad the patch to the full patch size if necessary
-            let mut padded_patch = GrayImage::new(patch_size as u32, patch_size as u32);
-            for y in 0..patch.height() {
-                for x in 0..patch.width() {
-                    padded_patch.put_pixel(x, y, *patch.get_pixel(x, y));
+                // Pad the patch to the full patch size if necessary
+                let mut padded_patch = GrayImage::new(patch_size as u32, patch_size as u32);
+                for y in 0..patch.height() {
+                    for x in 0..patch.width() {
+                        padded_patch.put_pixel(x, y, *patch.get_pixel(x, y));
+                    }
                 }
-            }
 
-            // Convert the patch to a tensor
-            let tensor: Tensor = tract_ndarray::Array4::from_shape_fn((1, 1, patch_size, patch_size), |(_, _, y, x)| {
-                padded_patch.get_pixel(x as u32, y as u32).0[0] as f32 / 255.0
-            }).into();
+                // Convert the patch to a tensor
+                let tensor: Tensor = tract_ndarray::Array4::from_shape_fn(
+                    (1, 1, patch_size, patch_size),
+                    |(_, _, y, x)| padded_patch.get_pixel(x as u32, y as u32).0[0] as f32 / 255.0,
+                )
+                .into();
 
-            // Run the model
-            let result = model.run(tvec!(tensor.into())).unwrap();
-            let output_patch: tract_ndarray::ArrayView4<f32> = result[0].to_array_view::<f32>().unwrap().into_dimensionality().unwrap();
+                // Run the model
+                let result = model.run(tvec!(tensor.into())).unwrap();
+                let output_patch: tract_ndarray::ArrayView4<f32> = result[0]
+                    .to_array_view::<f32>()
+                    .unwrap()
+                    .into_dimensionality()
+                    .unwrap();
 
-            // Copy the output patch to the output image
-            let mut output_image = output_image.lock().unwrap();
-            for y in 0..patch.height() {
-                for x in 0..patch.width() {
-                    let value = (output_patch[[0, 0, y as usize, x as usize]] * 255.0).round() as u8;
-                    output_image.put_pixel(j + x, i + y, Luma([value]));
+                // Copy the output patch to the output image
+                let mut output_image = output_image.lock().unwrap();
+                for y in 0..patch.height() {
+                    for x in 0..patch.width() {
+                        let value =
+                            (output_patch[[0, 0, y as usize, x as usize]] * 255.0).round() as u8;
+                        output_image.put_pixel(j + x, i + y, Luma([value]));
+                    }
                 }
-            }
+            });
         });
-    });
 
-    output_image.lock().unwrap().save("enhanced_image.png").unwrap();
+    output_image
+        .lock()
+        .unwrap()
+        .save("enhanced_image.png")
+        .unwrap();
 
     Ok(String::from("enhanced_image.png"))
 }
