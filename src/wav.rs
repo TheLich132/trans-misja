@@ -105,8 +105,7 @@ pub fn compute_signal(
     progress_bar.set_text(Some("Demodulating..."));
 
     // APT Signal sync
-    let path: String;
-    if *sync {
+    let path: String = if *sync {
         println!("Syncing...");
         let frame_width = (frequency * 0.5) as usize;
 
@@ -119,22 +118,22 @@ pub fn compute_signal(
         ];
         let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern);
 
-        path = match generate_image(&synced_signal, frequency, 5) {
+        match generate_image(&synced_signal, frequency, 5) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("Error generating image: {}", e);
                 return String::from("Error generating image");
             }
-        };
+        }
     } else {
-        path = match generate_image(&am_signal, frequency, 5) {
+        match generate_image(&am_signal, frequency, 5) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("Error generating image: {}", e);
                 return String::from("Error generating image");
             }
-        };
-    }
+        }
+    };
 
     // Update progress bar
     progress_bar.set_fraction(0.9);
@@ -236,7 +235,7 @@ fn find_sync_position(signal: &[f32], sync_pattern: &[f32]) -> usize {
     best_offset
 }
 
-fn sync_apt(signal: &Vec<f32>, frame_width: usize, sync_pattern: &[f32]) -> Vec<f32> {
+fn sync_apt(signal: &[f32], frame_width: usize, sync_pattern: &[f32]) -> Vec<f32> {
     let mut synced = Vec::with_capacity(signal.len());
     let rows = signal.len() / frame_width;
     const ADDITIONAL_OFFSET: usize = 120; // Adjust this value as needed
@@ -303,13 +302,13 @@ fn sync_apt(signal: &Vec<f32>, frame_width: usize, sync_pattern: &[f32]) -> Vec<
     synced
 }
 
-fn envelope_detection(signal: &Vec<f32>, window_size: usize, scaling_factor: f32) -> Vec<f32> {
+fn envelope_detection(signal: &[f32], window_size: usize, scaling_factor: f32) -> Vec<f32> {
     let mut envelope: Vec<f32> = Vec::with_capacity(signal.len());
     for i in 0..signal.len() {
         let mut max: f32 = 0.0; // specify the type of max explicitly
         let end = (i + window_size).min(signal.len());
-        for j in i..end {
-            max = max.max(signal[j].abs());
+        for sample in signal.iter().take(end).skip(i) {
+            max = max.max(sample.abs());
         }
         envelope.push(max * scaling_factor);
     }
@@ -317,7 +316,7 @@ fn envelope_detection(signal: &Vec<f32>, window_size: usize, scaling_factor: f32
 }
 
 fn generate_image(
-    signal: &Vec<f32>,
+    signal: &[f32],
     frequency: f32,
     reduction_factor: u32,
 ) -> Result<String, Box<dyn Error>> {
@@ -402,10 +401,10 @@ fn enhance_image_with_model(
                 // Extract the patch from the image
                 let patch = image
                     .view(
-                        j as u32,
-                        i as u32,
-                        (patch_size as u32).min((width - j) as u32),
-                        (patch_size as u32).min((height - i) as u32),
+                        j,
+                        i,
+                        (patch_size as u32).min(width - j),
+                        (patch_size as u32).min(height - i),
                     )
                     .to_image();
 
