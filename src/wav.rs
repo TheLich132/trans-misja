@@ -1,10 +1,14 @@
 use gtk4::ProgressBar;
 use hound::WavReader;
 use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
+use ndarray;
+use ort::{
+    session::{builder::GraphOptimizationLevel, Session},
+    value::Tensor,
+};
 use rayon::prelude::*;
-use std::{error::Error, sync::Mutex};
-use tract_onnx::prelude::*;
 use std::time::Instant;
+use std::{error::Error, sync::Mutex};
 
 pub fn compute_signal(
     filepath: &str,
@@ -162,7 +166,7 @@ pub fn compute_signal(
         // Stop timer
         let duration = start.elapsed();
         println!("Time elapsed: {:?}", duration);
-        
+
         path
     }
 }
@@ -387,14 +391,19 @@ fn enhance_image_with_model(
     model_path: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Load the ONNX model
-    let model = tract_onnx::onnx()
-        .model_for_path(model_path)?
-        .with_input_fact(
-            0,
-            InferenceFact::dt_shape(f32::datum_type(), tvec![1, 1, 256, 256]),
-        )?
-        .into_optimized()?
-        .into_runnable()?;
+    let model = Session::builder()?
+        .with_optimization_level(GraphOptimizationLevel::Level3)?
+        .with_intra_threads(4)?
+        .commit_from_file(model_path)?;
+
+    println!("Inputs:");
+    for (i, input) in model.inputs.iter().enumerate() {
+        println!("    {i} {}: {}", input.name, input.input_type);
+    }
+    println!("Outputs:");
+    for (i, output) in model.outputs.iter().enumerate() {
+        println!("    {i} {}: {}", output.name, output.output_type);
+    }
 
     // Load and preprocess the image
     let image = image::open(image_path)?.to_luma8();
@@ -431,19 +440,24 @@ fn enhance_image_with_model(
                 }
 
                 // Convert the patch to a tensor
-                let tensor: Tensor = tract_ndarray::Array4::from_shape_fn(
-                    (1, 1, patch_size, patch_size),
-                    |(_, _, y, x)| padded_patch.get_pixel(x as u32, y as u32).0[0] as f32 / 255.0,
-                )
-                .into();
+                let tensor: Tensor<f32> = Tensor::from_array(
+                    ndarray::Array4::from_shape_vec(
+                        (1, 1, patch_size as usize, patch_size as usize),
+                        padded_patch.iter().map(|&p| p as f32 / 255.0).collect::<Vec<f32>>(),
+                    ).unwrap()
+                ).unwrap();
 
                 // Run the model
-                let result = model.run(tvec!(tensor.into())).unwrap();
-                let output_patch: tract_ndarray::ArrayView4<f32> = result[0]
-                    .to_array_view::<f32>()
-                    .unwrap()
-                    .into_dimensionality()
-                    .unwrap();
+                let result = match model.run(vec![("input.1", tensor)]) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        eprintln!("Error running model: {}", e);
+                        return;
+                    }
+                };
+
+                // Get the output patch
+                let output_patch = result.get("95").unwrap().try_extract_tensor::<f32>().unwrap();
 
                 // Copy the output patch to the output image
                 let mut output_image = output_image.lock().unwrap();

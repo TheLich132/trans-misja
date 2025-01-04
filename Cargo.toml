@@ -9,5 +9,6 @@ glib-macros = "0.20.7"
 gtk4 = "0.9.5"
 hound = "3.5.1"
 image = "0.25.5"
+ort = { version="=2.0.0-rc.9", features = [ "cuda" ] }
 rayon = "1.10.0"
-tract-onnx = "0.21.8"
+ndarray = "0.16.1"
