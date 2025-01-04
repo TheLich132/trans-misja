@@ -4,6 +4,7 @@ use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
 use rayon::prelude::*;
 use std::{error::Error, sync::Mutex};
 use tract_onnx::prelude::*;
+use std::time::Instant;
 
 pub fn compute_signal(
     filepath: &str,
@@ -12,6 +13,9 @@ pub fn compute_signal(
     use_model: &bool,
     progress_bar: &ProgressBar,
 ) -> String {
+    // Start timer
+    let start = Instant::now();
+
     println!("Debug: {}, Sync: {}, Use model: {}", debug, sync, use_model);
 
     // Update progress bar
@@ -145,10 +149,20 @@ pub fn compute_signal(
         let enhanced_image_path = enhance_image_with_model(&path, model_path).unwrap();
         progress_bar.set_fraction(1.0);
         progress_bar.set_text(Some("Enhancement complete"));
+
+        // Stop timer
+        let duration = start.elapsed();
+        println!("Time elapsed: {:?}", duration);
+
         enhanced_image_path
     } else {
         progress_bar.set_fraction(1.0);
         progress_bar.set_text(Some("Processing complete"));
+
+        // Stop timer
+        let duration = start.elapsed();
+        println!("Time elapsed: {:?}", duration);
+        
         path
     }
 }
