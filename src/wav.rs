@@ -3,8 +3,7 @@ use hound::WavReader;
 use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
 use ndarray;
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session},
-    value::Tensor,
+    execution_providers::CUDAExecutionProvider, session::{builder::GraphOptimizationLevel, Session}, value::Tensor
 };
 use rayon::prelude::*;
 use std::time::Instant;
@@ -394,6 +393,7 @@ fn enhance_image_with_model(
     let model = Session::builder()?
         .with_optimization_level(GraphOptimizationLevel::Level3)?
         .with_intra_threads(4)?
+        .with_execution_providers([CUDAExecutionProvider::default().build()])?
         .commit_from_file(model_path)?;
 
     println!("Inputs:");
