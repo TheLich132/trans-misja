@@ -35,6 +35,8 @@ pub fn build_ui(app: &gtk4::Application) {
     load_css();
 
     let debug: bool = env::var("DEBUG").map_or(false, |v| v == "1");
+    let benchmark_ram: bool = env::var("BENCH_RAM").map_or(false, |v| v == "1");
+    let benchmark_cpu: bool = env::var("BENCH_CPU").map_or(false, |v| v == "1");
     let sync = Rc::new(Cell::new(false));
     let use_model = Rc::new(Cell::new(false));
 
@@ -140,10 +142,10 @@ pub fn build_ui(app: &gtk4::Application) {
     // Po kliknięciu przycisku "Proceed" wywołaj compute_signal z globals
     let sync_clone = Rc::clone(&sync);
     let use_model_clone = Rc::clone(&use_model);
-    button_proceed.connect_clicked(clone!(#[weak] text_box, #[weak] picture_widget, #[strong] debug, #[weak] sync_clone, #[weak] use_model_clone, #[weak] progress_bar, move |_| {
+    button_proceed.connect_clicked(clone!(#[weak] text_box, #[weak] picture_widget, #[strong] debug, #[strong] benchmark_ram, #[strong] benchmark_cpu, #[weak] sync_clone, #[weak] use_model_clone, #[weak] progress_bar, move |_| {
         let filename = text_box.text();
         if !filename.is_empty() {
-            let path = compute_signal(&filename, &debug, &sync_clone.get(), &use_model_clone.get(), &progress_bar);
+            let path = compute_signal(&filename, &debug, &benchmark_ram, &benchmark_cpu, &sync_clone.get(), &use_model_clone.get(), &progress_bar);
             if !path.is_empty() {
                 let file = gio::File::for_path(&path);
                 picture_widget.set_file(Some(&file));

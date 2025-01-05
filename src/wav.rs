@@ -3,20 +3,27 @@ use hound::WavReader;
 use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
 use ndarray;
 use ort::{
-    execution_providers::CUDAExecutionProvider, session::{builder::GraphOptimizationLevel, Session}, value::Tensor
+    execution_providers::CUDAExecutionProvider,
+    session::{builder::GraphOptimizationLevel, Session},
+    value::Tensor,
 };
 use rayon::prelude::*;
 use std::time::Instant;
 use std::{error::Error, sync::Mutex};
-use sysinfo::System;
+use sysinfo::{get_current_pid, Pid, System};
 
 pub fn compute_signal(
     filepath: &str,
     debug: &bool,
+    benchmark_ram: &bool,
+    benchmark_cpu: &bool,
     sync: &bool,
     use_model: &bool,
     progress_bar: &ProgressBar,
 ) -> String {
+    let mut ram_usage: Vec<f32> = Vec::new();
+    let mut cpu_usage: Vec<f32> = Vec::new();
+
     // Start timer
     let start = Instant::now();
 
@@ -26,11 +33,19 @@ pub fn compute_signal(
     // Refresh all information
     sys.refresh_all();
 
+    // Get current PID
+    let pid = get_current_pid().unwrap();
+
     println!("=> system:");
     // Number of CPUs:
     println!("NB CPUs: {}", sys.cpus().len());
+    println!("=> process:");
+    // Process ID:
+    println!("PID: {}", pid);
+    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
-    println!("Debug: {}, Sync: {}, Use model: {}", debug, sync, use_model);
+    println!("Debug: {}, Benchmark RAM: {}, Benchmark CPU: {}, Sync: {}, Use model: {}", debug, benchmark_ram, benchmark_cpu, sync, use_model);
 
     // Update progress bar
     progress_bar.set_fraction(0.1);
@@ -47,6 +62,9 @@ pub fn compute_signal(
         println!("Channels: {}", spec.channels);
         println!("Sample format: {:?}", spec.sample_format);
     }
+
+    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     let target_sample_rate = 20800;
 
@@ -83,6 +101,9 @@ pub fn compute_signal(
         }
     }
 
+    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+
     // Update progress bar
     progress_bar.set_fraction(0.3);
     progress_bar.set_text(Some("Processing samples..."));
@@ -96,6 +117,9 @@ pub fn compute_signal(
     // Resampling
     let ratio = target_sample_rate as f64 / spec.sample_rate as f64;
     let resampled_samples = resample_signal(samples, ratio);
+
+    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
     progress_bar.set_fraction(0.5);
@@ -111,12 +135,18 @@ pub fn compute_signal(
 
     let filtered_signal = low_pass_filter(&resampled_samples, 5000.0, frequency);
 
+    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+
     // Update progress bar
     progress_bar.set_fraction(0.7);
     progress_bar.set_text(Some("Filtering signal..."));
 
     println!("Demodulating...");
     let am_signal = envelope_detection(&filtered_signal, 10, 2.0);
+
+    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
     progress_bar.set_fraction(0.8);
@@ -136,6 +166,9 @@ pub fn compute_signal(
         ];
         let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern);
 
+        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+
         match generate_image(&synced_signal, frequency, 5) {
             Ok(p) => p,
             Err(e) => {
@@ -144,6 +177,9 @@ pub fn compute_signal(
             }
         }
     } else {
+        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+
         match generate_image(&am_signal, frequency, 5) {
             Ok(p) => p,
             Err(e) => {
@@ -160,28 +196,94 @@ pub fn compute_signal(
     if *use_model {
         println!("Enhancing image...");
         let model_path = "model.onnx";
-        let enhanced_image_path = enhance_image_with_model(&path, model_path, sys.cpus().len()).unwrap();
+        let enhanced_image_path =
+            enhance_image_with_model(&path, model_path, sys.cpus().len()).unwrap();
         progress_bar.set_fraction(1.0);
         progress_bar.set_text(Some("Enhancement complete"));
 
+        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+
         // Stop timer
         let duration = start.elapsed();
+
+        // Print benchmark results
         println!("Time elapsed: {:?}", duration);
+        if *benchmark_ram {
+            println!(
+                "Avg RAM usage: {:.2} MB",
+                ram_usage.iter().sum::<f32>() / ram_usage.len() as f32
+            );
+        }
+        if *benchmark_cpu {
+            println!(
+                "Avg CPU usage: {:.2} %",
+                cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
+            );
+        }
 
         enhanced_image_path
     } else {
         progress_bar.set_fraction(1.0);
         progress_bar.set_text(Some("Processing complete"));
 
+        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+
         // Stop timer
         let duration = start.elapsed();
+
+        // Print benchmark results
         println!("Time elapsed: {:?}", duration);
+        if *benchmark_ram {
+            println!(
+                "Avg RAM usage: {:.2} MB",
+                ram_usage.iter().sum::<f32>() / ram_usage.len() as f32
+            );
+        }
+        if *benchmark_cpu {
+            println!(
+                "Avg CPU usage: {:.2} %",
+                cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
+            );
+        }
 
         path
     }
 }
 
-fn resample_signal(samples: Vec<f32>, ratio: f64) -> Vec<f32> {
+fn push_ram_usage(benchmark_ram: &bool, sys: &mut System, ram_usage: &mut Vec<f32>, pid: Pid) {
+    if !*benchmark_ram {
+        return;
+    }
+
+    // Refresh all information
+    sys.refresh_all();
+
+    // Get current PID
+    if let Some(process) = sys.process(pid) {
+        ram_usage.push(process.memory() as f32 / 1048576.0);
+    }
+}
+
+fn push_cpu_usage(benchmark_cpu: &bool, sys: &mut System, cpu_usage: &mut Vec<f32>, pid: Pid) {
+    if !*benchmark_cpu {
+        return;
+    }
+
+    // Refresh all information
+    sys.refresh_all();
+
+    // Get current PID
+    if let Some(process) = sys.process(pid) {
+        cpu_usage.push(process.cpu_usage() as f32 / sys.cpus().len() as f32);
+    }
+}
+
+fn resample_signal(
+    samples: Vec<f32>,
+    ratio: f64
+) -> Vec<f32> {
     let target_len = (samples.len() as f64 * ratio) as usize;
     (0..target_len)
         .filter_map(|i| {
@@ -190,7 +292,7 @@ fn resample_signal(samples: Vec<f32>, ratio: f64) -> Vec<f32> {
                 None
             } else {
                 let x = (i as f64 / ratio) - index as f64;
-                let y = samples[index] + x as f32 * (samples[index + 1] - samples[index]);
+                let y = samples[index] + x as f32 * (samples[index + 1] - samples[index]);                
                 Some(y)
             }
         })
@@ -455,9 +557,14 @@ fn enhance_image_with_model(
                 let tensor: Tensor<f32> = Tensor::from_array(
                     ndarray::Array4::from_shape_vec(
                         (1, 1, patch_size as usize, patch_size as usize),
-                        padded_patch.iter().map(|&p| p as f32 / 255.0).collect::<Vec<f32>>(),
-                    ).unwrap()
-                ).unwrap();
+                        padded_patch
+                            .iter()
+                            .map(|&p| p as f32 / 255.0)
+                            .collect::<Vec<f32>>(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
 
                 // Run the model
                 let result = match model.run(vec![("input.1", tensor)]) {
@@ -469,7 +576,11 @@ fn enhance_image_with_model(
                 };
 
                 // Get the output patch
-                let output_patch = result.get("95").unwrap().try_extract_tensor::<f32>().unwrap();
+                let output_patch = result
+                    .get("95")
+                    .unwrap()
+                    .try_extract_tensor::<f32>()
+                    .unwrap();
 
                 // Copy the output patch to the output image
                 let mut output_image = output_image.lock().unwrap();
