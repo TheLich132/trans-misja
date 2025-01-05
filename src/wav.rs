@@ -8,6 +8,7 @@ use ort::{
 use rayon::prelude::*;
 use std::time::Instant;
 use std::{error::Error, sync::Mutex};
+use sysinfo::System;
 
 pub fn compute_signal(
     filepath: &str,
@@ -18,6 +19,16 @@ pub fn compute_signal(
 ) -> String {
     // Start timer
     let start = Instant::now();
+
+    // System information
+    let mut sys = System::new_all();
+
+    // Refresh all information
+    sys.refresh_all();
+
+    println!("=> system:");
+    // Number of CPUs:
+    println!("NB CPUs: {}", sys.cpus().len());
 
     println!("Debug: {}, Sync: {}, Use model: {}", debug, sync, use_model);
 
@@ -149,7 +160,7 @@ pub fn compute_signal(
     if *use_model {
         println!("Enhancing image...");
         let model_path = "model.onnx";
-        let enhanced_image_path = enhance_image_with_model(&path, model_path).unwrap();
+        let enhanced_image_path = enhance_image_with_model(&path, model_path, sys.cpus().len()).unwrap();
         progress_bar.set_fraction(1.0);
         progress_bar.set_text(Some("Enhancement complete"));
 
@@ -388,11 +399,12 @@ fn generate_image(
 fn enhance_image_with_model(
     image_path: &str,
     model_path: &str,
+    cpu_threads: usize,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Load the ONNX model
     let model = Session::builder()?
         .with_optimization_level(GraphOptimizationLevel::Level3)?
-        .with_intra_threads(4)?
+        .with_intra_threads(cpu_threads)?
         .with_execution_providers([CUDAExecutionProvider::default().build()])?
         .commit_from_file(model_path)?;
 
