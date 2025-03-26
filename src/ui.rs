@@ -1,10 +1,23 @@
-use std::env;
+use std::{
+    env,
+    fs::File,
+    io::Write,
+    path::Path,
+    cell::Cell,
+    rc::Rc,
+};
 use crate::wav::compute_signal;
 use glib_macros::clone;
-use gtk4::prelude::*;
-use gtk4::{gdk, glib};
-use std::cell::Cell;
-use std::rc::Rc;
+use gtk4::{
+    prelude::*,
+    gdk,
+    glib,
+    ButtonsType,
+    MessageType,
+};
+use reqwest::blocking::get;
+
+const UNET_MODEL_URL: &str = "https://huggingface.co/TempUser123/NOAA_U-Net/resolve/main/model.onnx?download=true";
 
 fn load_css() {
     let settings = gio::Settings::new("org.gnome.desktop.interface");
@@ -65,7 +78,7 @@ pub fn build_ui(app: &gtk4::Application) {
                 if let Some(file) = dialog.file() {
                     if let Some(path) = file.path() {
                         text_box.set_text(&path.to_string_lossy());
-                        button_proceed.set_sensitive(true); // Upewnij się, że przycisk jest włączony po wyborze pliku
+                        button_proceed.set_sensitive(true);
                     }
                 }
             }
@@ -83,14 +96,59 @@ pub fn build_ui(app: &gtk4::Application) {
         sync_clone.set(checkbox_sync.is_active());
     });
 
-    let checkbox_use_model = gtk4::CheckButton::with_label("Enhance image");
+    let checkbox_use_model = Rc::new(gtk4::CheckButton::with_label("Enhance image (U-Net)"));
     checkbox_use_model.set_active(false);
-
+    
     let use_model_clone = Rc::clone(&use_model);
-    checkbox_use_model.connect_toggled(move |checkbox_use_model| {
-        println!("Enhance image: {}", checkbox_use_model.is_active());
-        use_model_clone.set(checkbox_use_model.is_active());
-    });
+    let checkbox_use_model_clone = Rc::clone(&checkbox_use_model);
+    checkbox_use_model.connect_toggled(clone!(#[strong] use_model_clone, move |checkbox| {
+        println!("Enhance image: {}", checkbox.is_active());
+        use_model_clone.set(checkbox.is_active());
+
+        if checkbox.is_active() {
+            let model_path = Path::new("model.onnx");
+            if !model_path.exists() {
+                let dialog = gtk4::MessageDialog::builder()
+                    .message_type(MessageType::Warning)
+                    .buttons(ButtonsType::YesNo)
+                    .text("The U-Net model file is missing. Would you like to download it?")
+                    .modal(true)
+                    .build();
+
+                dialog.connect_response(clone!(#[strong] checkbox_use_model_clone, move |dialog, response| {
+                    if response == gtk4::ResponseType::Yes {
+                        println!("Downloading the model...");
+                        match get(UNET_MODEL_URL) {
+                            Ok(response) if response.status().is_success() => {
+                                match File::create("model.onnx") {
+                                    Ok(mut file) => {
+                                        if let Ok(bytes) = response.bytes() {
+                                            if file.write_all(&bytes).is_ok() {
+                                                println!("Model downloaded successfully.");
+                                                checkbox_use_model_clone.set_active(true);
+                                            } else {
+                                                eprintln!("Failed to write the model to file.");
+                                            }
+                                        } else {
+                                            eprintln!("Failed to read the response bytes.");
+                                        }
+                                    }
+                                    Err(e) => eprintln!("Failed to create the model file: {}", e),
+                                }
+                            }
+                            Ok(response) => eprintln!("Failed to download the model. HTTP Status: {}", response.status()),
+                            Err(e) => eprintln!("Failed to send the request to download the model: {}", e),
+                        }
+                    } else {
+                        checkbox_use_model_clone.set_active(false);
+                    }
+                    dialog.close();
+                }));
+
+                dialog.show();
+            }
+        }
+    }));
     
     let main_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     main_vbox.set_hexpand(true);
@@ -112,7 +170,7 @@ pub fn build_ui(app: &gtk4::Application) {
 
     let checkbox_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
     checkbox_box.append(&checkbox_sync);
-    checkbox_box.append(&checkbox_use_model);
+    checkbox_box.append(&*checkbox_use_model);
 
     top_grid.attach(&button_proceed, 2, 1, 1, 1);
     top_grid.attach(&checkbox_box, 0, 1, 2, 1);
