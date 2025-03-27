@@ -1,7 +1,6 @@
 use gtk4::ProgressBar;
 use hound::WavReader;
 use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
-use ndarray;
 use ort::{
     execution_providers::CUDAExecutionProvider,
     session::{builder::GraphOptimizationLevel, Session},
@@ -45,7 +44,10 @@ pub fn compute_signal(
     push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
     push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
-    println!("Debug: {}, Benchmark RAM: {}, Benchmark CPU: {}, Sync: {}, Use model: {}", debug, benchmark_ram, benchmark_cpu, sync, use_model);
+    println!(
+        "Debug: {}, Benchmark RAM: {}, Benchmark CPU: {}, Sync: {}, Use model: {}",
+        debug, benchmark_ram, benchmark_cpu, sync, use_model
+    );
 
     // Update progress bar
     progress_bar.set_fraction(0.1);
@@ -276,14 +278,11 @@ fn push_cpu_usage(benchmark_cpu: &bool, sys: &mut System, cpu_usage: &mut Vec<f3
 
     // Get current PID
     if let Some(process) = sys.process(pid) {
-        cpu_usage.push(process.cpu_usage() as f32 / sys.cpus().len() as f32);
+        cpu_usage.push(process.cpu_usage() / sys.cpus().len() as f32);
     }
 }
 
-fn resample_signal(
-    samples: Vec<f32>,
-    ratio: f64
-) -> Vec<f32> {
+fn resample_signal(samples: Vec<f32>, ratio: f64) -> Vec<f32> {
     let target_len = (samples.len() as f64 * ratio) as usize;
     (0..target_len)
         .filter_map(|i| {
@@ -292,7 +291,7 @@ fn resample_signal(
                 None
             } else {
                 let x = (i as f64 / ratio) - index as f64;
-                let y = samples[index] + x as f32 * (samples[index + 1] - samples[index]);                
+                let y = samples[index] + x as f32 * (samples[index + 1] - samples[index]);
                 Some(y)
             }
         })
@@ -556,7 +555,7 @@ fn enhance_image_with_model(
                 // Convert the patch to a tensor
                 let tensor: Tensor<f32> = Tensor::from_array(
                     ndarray::Array4::from_shape_vec(
-                        (1, 1, patch_size as usize, patch_size as usize),
+                        (1, 1, patch_size, patch_size),
                         padded_patch
                             .iter()
                             .map(|&p| p as f32 / 255.0)
