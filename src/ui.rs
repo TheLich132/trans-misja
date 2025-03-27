@@ -5,15 +5,14 @@ use std::{
     path::Path,
     cell::Cell,
     rc::Rc,
+    cell::RefCell,
 };
 use crate::wav::compute_signal;
 use glib_macros::clone;
 use gtk4::{
     prelude::*,
     gdk,
-    glib,
-    ButtonsType,
-    MessageType,
+    glib
 };
 use reqwest::blocking::get;
 
@@ -53,6 +52,14 @@ pub fn build_ui(app: &gtk4::Application) {
     let sync = Rc::new(Cell::new(false));
     let use_model = Rc::new(Cell::new(false));
 
+    let window = Rc::new(gtk4::ApplicationWindow::builder()
+        .application(app)
+        .title("trans-misja")
+        .build());
+    let window_clone = Rc::clone(&window);
+
+    window.set_default_size(800, 600);
+
     let text_box = gtk4::Entry::new();
     text_box.set_placeholder_text(Some("Select a WAV file..."));
 
@@ -61,30 +68,22 @@ pub fn build_ui(app: &gtk4::Application) {
 
     let button_open_file = gtk4::Button::with_label("Open File");
     button_open_file.connect_clicked(clone!(#[strong] text_box, #[weak] button_proceed, move |_| {
-        let dialog = gtk4::FileChooserDialog::new(
-            Some("Select a WAV file"),
-            Some(&gtk4::Window::default()),
-            gtk4::FileChooserAction::Open,
-            &[("Open", gtk4::ResponseType::Ok), ("Cancel", gtk4::ResponseType::Cancel)],
-        );
-        dialog.set_modal(true);
-        dialog.set_select_multiple(false);
+        let file_dialog = gtk4::FileDialog::new();
         let filter = gtk4::FileFilter::new();
         filter.set_name(Some("WAV files"));
         filter.add_mime_type("audio/x-wav");
-        dialog.add_filter(&filter);
-        dialog.connect_response(clone!(#[strong] text_box, #[weak] button_proceed, move |dialog, response| {
-            if response == gtk4::ResponseType::Ok {
-                if let Some(file) = dialog.file() {
-                    if let Some(path) = file.path() {
-                        text_box.set_text(&path.to_string_lossy());
-                        button_proceed.set_sensitive(true);
-                    }
+        let filter_store = gio::ListStore::with_type(gtk4::FileFilter::static_type());
+        filter_store.append(&filter);
+        file_dialog.set_filters(Some(&filter_store));
+
+        file_dialog.open(Some(&gtk4::Window::default()), None::<&gio::Cancellable>, clone!(#[strong] text_box, #[weak] button_proceed, move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    text_box.set_text(&path.to_string_lossy());
+                    button_proceed.set_sensitive(true);
                 }
             }
-            dialog.close();
         }));
-        dialog.show();
     }));
 
     let checkbox_sync = gtk4::CheckButton::with_label("Sync");
@@ -100,52 +99,92 @@ pub fn build_ui(app: &gtk4::Application) {
     checkbox_use_model.set_active(false);
     
     let use_model_clone = Rc::clone(&use_model);
-    let checkbox_use_model_clone = Rc::clone(&checkbox_use_model);
-    checkbox_use_model.connect_toggled(clone!(#[strong] use_model_clone, move |checkbox| {
+    let checkbox_use_model_clone = Rc::new(RefCell::new(Rc::clone(&checkbox_use_model)));
+    checkbox_use_model.connect_toggled(clone!(#[strong] use_model_clone, #[strong] window, move |checkbox| {
         println!("Enhance image: {}", checkbox.is_active());
         use_model_clone.set(checkbox.is_active());
 
         if checkbox.is_active() {
             let model_path = Path::new("model.onnx");
             if !model_path.exists() {
-                let dialog = gtk4::MessageDialog::builder()
-                    .message_type(MessageType::Warning)
-                    .buttons(ButtonsType::YesNo)
-                    .text("The U-Net model file is missing. Would you like to download it?")
+                let dialog = gtk4::AlertDialog::builder()
+                    .message("The U-Net model file is missing. Would you like to download it?")
+                    .buttons(["Yes", "No"])
                     .modal(true)
                     .build();
 
-                dialog.connect_response(clone!(#[strong] checkbox_use_model_clone, move |dialog, response| {
-                    if response == gtk4::ResponseType::Yes {
-                        println!("Downloading the model...");
-                        match get(UNET_MODEL_URL) {
-                            Ok(response) if response.status().is_success() => {
-                                match File::create("model.onnx") {
-                                    Ok(mut file) => {
-                                        if let Ok(bytes) = response.bytes() {
-                                            if file.write_all(&bytes).is_ok() {
-                                                println!("Model downloaded successfully.");
-                                                checkbox_use_model_clone.set_active(true);
+                let answer = dialog.choose_future(Some(window.as_ref()));
+
+                let checkbox_use_model_clone = Rc::clone(&checkbox_use_model_clone);
+                let progress_window = gtk4::Window::builder()
+                    .title("Downloading Model")
+                    .default_width(300)
+                    .default_height(100)
+                    .modal(true)
+                    .transient_for(window.as_ref())
+                    .build();
+                progress_window.set_resizable(false);
+
+                let progress_bar = gtk4::ProgressBar::new();
+                progress_bar.set_show_text(true);
+                progress_bar.set_text(Some("Starting download..."));
+                progress_bar.set_margin_top(12);
+                progress_bar.set_margin_bottom(12);
+                progress_bar.set_margin_start(12);
+                progress_bar.set_margin_end(12);
+
+                progress_window.set_child(Some(&progress_bar));
+                progress_window.present();
+
+                glib::MainContext::default().spawn_local(async move {
+                    let checkbox_use_model_clone = checkbox_use_model_clone.borrow();
+                    match answer.await {
+                        Ok(0) => {
+                            println!("Downloading the model...");
+                            match get(UNET_MODEL_URL) {
+                                Ok(response) if response.status().is_success() => {
+                                    let total_size = response.content_length().unwrap_or(0);
+
+                                    match File::create("model.onnx") {
+                                        Ok(mut file) => {
+                                            let mut downloaded: u64 = 0;
+                                            let content = match response.bytes() {
+                                                Ok(bytes) => bytes,
+                                                Err(_) => {
+                                                    eprintln!("Failed to read response bytes.");
+                                                    return;
+                                                }
+                                            };
+        
+                                            if file.write_all(&content).is_ok() {
+                                                downloaded += content.len() as u64;
+                                                let progress = downloaded as f64 / total_size as f64;
+                                                progress_bar.set_fraction(progress);
+                                                progress_bar.set_text(Some(&format!(
+                                                    "Downloading... {:.0}%",
+                                                    progress * 100.0
+                                                )));
                                             } else {
                                                 eprintln!("Failed to write the model to file.");
                                             }
-                                        } else {
-                                            eprintln!("Failed to read the response bytes.");
+                                            if downloaded == total_size {
+                                                println!("Model downloaded successfully.");
+                                                checkbox_use_model_clone.set_active(true);
+                                            }
                                         }
+                                        Err(e) => eprintln!("Failed to create the model file: {}", e),
                                     }
-                                    Err(e) => eprintln!("Failed to create the model file: {}", e),
                                 }
+                                Ok(response) => eprintln!("Failed to download the model. HTTP Status: {}", response.status()),
+                                Err(e) => eprintln!("Failed to send the request to download the model: {}", e),
                             }
-                            Ok(response) => eprintln!("Failed to download the model. HTTP Status: {}", response.status()),
-                            Err(e) => eprintln!("Failed to send the request to download the model: {}", e),
                         }
-                    } else {
-                        checkbox_use_model_clone.set_active(false);
+                        Ok(1) => checkbox_use_model_clone.set_active(false),
+                        Err(e) => eprintln!("Error occurred while awaiting dialog response: {}", e),
+                        _ => {}
                     }
-                    dialog.close();
-                }));
-
-                dialog.show();
+                    progress_window.close();
+                });
             }
         }
     }));
@@ -210,13 +249,7 @@ pub fn build_ui(app: &gtk4::Application) {
             }
         }
     }));
-
-    let window = gtk4::ApplicationWindow::builder()
-        .application(app)
-        .title("trans-misja")
-        .child(&main_vbox)
-        .build();
-
-    window.set_default_size(800, 600);
+    window_clone.set_child(Some(&main_vbox));
+    let window = Rc::clone(&window);
     window.present();
 }
