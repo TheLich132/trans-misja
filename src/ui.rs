@@ -63,6 +63,8 @@ pub fn build_ui(app: &gtk4::Application) {
         text_box,
         #[weak]
         button_proceed,
+        #[strong]
+        window,
         move |_| {
             let file_dialog = gtk4::FileDialog::new();
             let filter = gtk4::FileFilter::new();
@@ -71,9 +73,10 @@ pub fn build_ui(app: &gtk4::Application) {
             let filter_store = gio::ListStore::with_type(gtk4::FileFilter::static_type());
             filter_store.append(&filter);
             file_dialog.set_filters(Some(&filter_store));
+            file_dialog.set_modal(true);
 
             file_dialog.open(
-                Some(&gtk4::Window::default()),
+                Some(window.as_ref()),
                 None::<&gio::Cancellable>,
                 clone!(
                     #[strong]
