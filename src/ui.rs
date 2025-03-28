@@ -53,6 +53,7 @@ pub fn build_ui(app: &gtk4::Application) {
 
     let text_box = gtk4::Entry::new();
     text_box.set_placeholder_text(Some("Select a WAV file..."));
+    text_box.set_editable(false);
 
     let button_proceed = gtk4::Button::with_label("Proceed");
     button_proceed.set_sensitive(false);
