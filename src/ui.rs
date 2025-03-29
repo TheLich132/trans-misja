@@ -208,12 +208,8 @@ pub fn build_ui(app: &gtk4::Application) {
             if !filename.is_empty() {
                 let path = compute_signal(
                     filename,
-                    &app_state.debug,
-                    &app_state.benchmark_ram,
-                    &app_state.benchmark_cpu,
-                    &app_state.sync.get(),
-                    &app_state.use_model.get(),
-                    &ui_elements.progress_bar,
+                    &app_state,
+                    &ui_elements
                 );
                 if !path.is_empty() {
                     let file = gio::File::for_path(&path);

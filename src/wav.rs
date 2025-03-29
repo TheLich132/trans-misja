@@ -1,4 +1,6 @@
-use gtk4::ProgressBar;
+use crate::ui_elements::UiElements;
+use crate::app_state::AppState;
+
 use hound::WavReader;
 use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
 use ort::{
@@ -13,12 +15,8 @@ use sysinfo::{get_current_pid, Pid, System};
 
 pub fn compute_signal(
     filepath: &str,
-    debug: &bool,
-    benchmark_ram: &bool,
-    benchmark_cpu: &bool,
-    sync: &bool,
-    use_model: &bool,
-    progress_bar: &ProgressBar,
+    app_state: &AppState,
+    ui_elements: &UiElements,
 ) -> String {
     let mut ram_usage: Vec<f32> = Vec::new();
     let mut cpu_usage: Vec<f32> = Vec::new();
@@ -41,32 +39,32 @@ pub fn compute_signal(
     println!("=> process:");
     // Process ID:
     println!("PID: {}", pid);
-    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+    push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     println!(
         "Debug: {}, Benchmark RAM: {}, Benchmark CPU: {}, Sync: {}, Use model: {}",
-        debug, benchmark_ram, benchmark_cpu, sync, use_model
+        &app_state.debug, &app_state.benchmark_ram, &app_state.benchmark_cpu, &app_state.sync.get(), &app_state.use_model.get()
     );
 
     // Update progress bar
-    progress_bar.set_fraction(0.1);
-    progress_bar.set_text(Some("Loading WAV file..."));
+    ui_elements.progress_bar.set_fraction(0.1);
+    ui_elements.progress_bar.set_text(Some("Loading WAV file..."));
 
     /*
         Loading wav files with hound
     */
     let mut reader = WavReader::open(filepath).unwrap();
     let spec = reader.spec();
-    if *debug {
+    if app_state.debug {
         println!("Wav file: {}", filepath);
         println!("Sample rate: {}", spec.sample_rate);
         println!("Channels: {}", spec.channels);
         println!("Sample format: {:?}", spec.sample_format);
     }
 
-    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+    push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     let target_sample_rate = 20800;
 
@@ -103,12 +101,12 @@ pub fn compute_signal(
         }
     }
 
-    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+    push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    progress_bar.set_fraction(0.3);
-    progress_bar.set_text(Some("Processing samples..."));
+    ui_elements.progress_bar.set_fraction(0.3);
+    ui_elements.progress_bar.set_text(Some("Processing samples..."));
 
     println!("Samples: {}", samples.len());
     for sample in samples.iter().take(100) {
@@ -120,12 +118,12 @@ pub fn compute_signal(
     let ratio = target_sample_rate as f64 / spec.sample_rate as f64;
     let resampled_samples = resample_signal(samples, ratio);
 
-    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+    push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    progress_bar.set_fraction(0.5);
-    progress_bar.set_text(Some("Resampling..."));
+    ui_elements.progress_bar.set_fraction(0.5);
+    ui_elements.progress_bar.set_text(Some("Resampling..."));
 
     println!("Resampled samples: {}", resampled_samples.len());
     for sample in resampled_samples.iter().take(100) {
@@ -137,25 +135,25 @@ pub fn compute_signal(
 
     let filtered_signal = low_pass_filter(&resampled_samples, 5000.0, frequency);
 
-    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+    push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    progress_bar.set_fraction(0.7);
-    progress_bar.set_text(Some("Filtering signal..."));
+    ui_elements.progress_bar.set_fraction(0.7);
+    ui_elements.progress_bar.set_text(Some("Filtering signal..."));
 
     println!("Demodulating...");
     let am_signal = envelope_detection(&filtered_signal, 10, 2.0);
 
-    push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-    push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+    push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+    push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    progress_bar.set_fraction(0.8);
-    progress_bar.set_text(Some("Demodulating..."));
+    ui_elements.progress_bar.set_fraction(0.8);
+    ui_elements.progress_bar.set_text(Some("Demodulating..."));
 
     // APT Signal sync
-    let path: String = if *sync {
+    let path: String = if app_state.sync.get() {
         println!("Syncing...");
         let frame_width = (frequency * 0.5) as usize;
 
@@ -168,8 +166,8 @@ pub fn compute_signal(
         ];
         let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern);
 
-        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+        push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
         match generate_image(&synced_signal, frequency, 5) {
             Ok(p) => p,
@@ -179,8 +177,8 @@ pub fn compute_signal(
             }
         }
     } else {
-        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+        push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
         match generate_image(&am_signal, frequency, 5) {
             Ok(p) => p,
@@ -192,32 +190,32 @@ pub fn compute_signal(
     };
 
     // Update progress bar
-    progress_bar.set_fraction(0.9);
-    progress_bar.set_text(Some("Generating image..."));
+    ui_elements.progress_bar.set_fraction(0.9);
+    ui_elements.progress_bar.set_text(Some("Generating image..."));
 
-    if *use_model {
+    if app_state.use_model.get() {
         println!("Enhancing image...");
         let model_path = "model.onnx";
         let enhanced_image_path =
             enhance_image_with_model(&path, model_path, sys.cpus().len()).unwrap();
-        progress_bar.set_fraction(1.0);
-        progress_bar.set_text(Some("Enhancement complete"));
+        ui_elements.progress_bar.set_fraction(1.0);
+        ui_elements.progress_bar.set_text(Some("Enhancement complete"));
 
-        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+        push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
         // Stop timer
         let duration = start.elapsed();
 
         // Print benchmark results
         println!("Time elapsed: {:?}", duration);
-        if *benchmark_ram {
+        if app_state.benchmark_ram {
             println!(
                 "Avg RAM usage: {:.2} MB",
                 ram_usage.iter().sum::<f32>() / ram_usage.len() as f32
             );
         }
-        if *benchmark_cpu {
+        if app_state.benchmark_cpu {
             println!(
                 "Avg CPU usage: {:.2} %",
                 cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
@@ -226,24 +224,24 @@ pub fn compute_signal(
 
         enhanced_image_path
     } else {
-        progress_bar.set_fraction(1.0);
-        progress_bar.set_text(Some("Processing complete"));
+        ui_elements.progress_bar.set_fraction(1.0);
+        ui_elements.progress_bar.set_text(Some("Processing complete"));
 
-        push_ram_usage(benchmark_ram, &mut sys, &mut ram_usage, pid);
-        push_cpu_usage(benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+        push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
         // Stop timer
         let duration = start.elapsed();
 
         // Print benchmark results
         println!("Time elapsed: {:?}", duration);
-        if *benchmark_ram {
+        if app_state.benchmark_ram {
             println!(
                 "Avg RAM usage: {:.2} MB",
                 ram_usage.iter().sum::<f32>() / ram_usage.len() as f32
             );
         }
-        if *benchmark_cpu {
+        if app_state.benchmark_cpu {
             println!(
                 "Avg CPU usage: {:.2} %",
                 cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
