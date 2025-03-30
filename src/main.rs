@@ -1,10 +1,12 @@
 use gtk4::glib;
 use gtk4::prelude::*;
 
-mod ui;
-mod wav;
 mod app_state;
+mod settings;
+mod settings_logic;
+mod ui;
 mod ui_elements;
+mod wav;
 
 const APP_ID: &str = "org.gtk-rs.trans-misja";
 

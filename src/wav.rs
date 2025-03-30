@@ -1,5 +1,6 @@
-use crate::ui_elements::UiElements;
 use crate::app_state::AppState;
+use crate::settings::FunctionsSettings;
+use crate::ui_elements::UiElements;
 
 use hound::WavReader;
 use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
@@ -17,6 +18,7 @@ pub fn compute_signal(
     filepath: &str,
     app_state: &AppState,
     ui_elements: &UiElements,
+    settings: &FunctionsSettings,
 ) -> String {
     let mut ram_usage: Vec<f32> = Vec::new();
     let mut cpu_usage: Vec<f32> = Vec::new();
@@ -44,12 +46,18 @@ pub fn compute_signal(
 
     println!(
         "Debug: {}, Benchmark RAM: {}, Benchmark CPU: {}, Sync: {}, Use model: {}",
-        &app_state.debug, &app_state.benchmark_ram, &app_state.benchmark_cpu, &app_state.sync.get(), &app_state.use_model.get()
+        &app_state.debug,
+        &app_state.benchmark_ram,
+        &app_state.benchmark_cpu,
+        &app_state.sync.get(),
+        &app_state.use_model.get()
     );
 
     // Update progress bar
     ui_elements.progress_bar.set_fraction(0.1);
-    ui_elements.progress_bar.set_text(Some("Loading WAV file..."));
+    ui_elements
+        .progress_bar
+        .set_text(Some("Loading WAV file..."));
 
     /*
         Loading wav files with hound
@@ -106,7 +114,9 @@ pub fn compute_signal(
 
     // Update progress bar
     ui_elements.progress_bar.set_fraction(0.3);
-    ui_elements.progress_bar.set_text(Some("Processing samples..."));
+    ui_elements
+        .progress_bar
+        .set_text(Some("Processing samples..."));
 
     println!("Samples: {}", samples.len());
     for sample in samples.iter().take(100) {
@@ -133,17 +143,23 @@ pub fn compute_signal(
 
     let frequency = target_sample_rate as f32;
 
-    let filtered_signal = low_pass_filter(&resampled_samples, 5000.0, frequency);
+    let filtered_signal = low_pass_filter(&resampled_samples, settings.cutoff_freq, frequency);
 
     push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
     push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
     ui_elements.progress_bar.set_fraction(0.7);
-    ui_elements.progress_bar.set_text(Some("Filtering signal..."));
+    ui_elements
+        .progress_bar
+        .set_text(Some("Filtering signal..."));
 
     println!("Demodulating...");
-    let am_signal = envelope_detection(&filtered_signal, 10, 2.0);
+    let am_signal = envelope_detection(
+        &filtered_signal,
+        settings.window_size,
+        settings.scaling_factor,
+    );
 
     push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
     push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
@@ -164,7 +180,12 @@ pub fn compute_signal(
             -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0,
             -1.0, -1.0, -1.0, -1.0, -1.0,
         ];
-        let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern);
+        let synced_signal = sync_apt(
+            &am_signal,
+            frame_width,
+            &sync_pattern,
+            settings.additional_offset,
+        );
 
         push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
         push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
@@ -191,15 +212,19 @@ pub fn compute_signal(
 
     // Update progress bar
     ui_elements.progress_bar.set_fraction(0.9);
-    ui_elements.progress_bar.set_text(Some("Generating image..."));
+    ui_elements
+        .progress_bar
+        .set_text(Some("Generating image..."));
 
     if app_state.use_model.get() {
         println!("Enhancing image...");
         let model_path = "model.onnx";
         let enhanced_image_path =
-            enhance_image_with_model(&path, model_path, sys.cpus().len()).unwrap();
+            enhance_image_with_model(&path, model_path, settings.cpu_threads).unwrap();
         ui_elements.progress_bar.set_fraction(1.0);
-        ui_elements.progress_bar.set_text(Some("Enhancement complete"));
+        ui_elements
+            .progress_bar
+            .set_text(Some("Enhancement complete"));
 
         push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
         push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
@@ -225,7 +250,9 @@ pub fn compute_signal(
         enhanced_image_path
     } else {
         ui_elements.progress_bar.set_fraction(1.0);
-        ui_elements.progress_bar.set_text(Some("Processing complete"));
+        ui_elements
+            .progress_bar
+            .set_text(Some("Processing complete"));
 
         push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
         push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
@@ -362,10 +389,14 @@ fn find_sync_position(signal: &[f32], sync_pattern: &[f32]) -> usize {
     best_offset
 }
 
-fn sync_apt(signal: &[f32], frame_width: usize, sync_pattern: &[f32]) -> Vec<f32> {
+fn sync_apt(
+    signal: &[f32],
+    frame_width: usize,
+    sync_pattern: &[f32],
+    additional_offset: usize,
+) -> Vec<f32> {
     let mut synced = Vec::with_capacity(signal.len());
     let rows = signal.len() / frame_width;
-    const ADDITIONAL_OFFSET: usize = 120; // Adjust this value as needed
 
     for r in 0..rows {
         let row_start = r * frame_width;
@@ -376,15 +407,12 @@ fn sync_apt(signal: &[f32], frame_width: usize, sync_pattern: &[f32]) -> Vec<f32
         let best_offset = find_sync_position(row_slice, sync_pattern);
 
         // Fine-tune the alignment by checking a small range around the best offset
-        let fine_tune_range = 5;
         let mut fine_tuned_offset = best_offset;
         let mut best_fine_tuned_score = f32::MIN;
         let mut weighted_sum = 0.0;
         let mut weight_total = 0.0;
 
-        for offset in (best_offset.saturating_sub(fine_tune_range))
-            ..=(best_offset + fine_tune_range).min(row_slice.len() - sync_pattern.len())
-        {
+        for offset in (best_offset)..=(best_offset).min(row_slice.len() - sync_pattern.len()) {
             let (score, signal_energy, pattern_energy) = (0..sync_pattern.len()).fold(
                 (0.0, 0.0, 0.0),
                 |(score, signal_energy, pattern_energy), i| {
@@ -414,7 +442,7 @@ fn sync_apt(signal: &[f32], frame_width: usize, sync_pattern: &[f32]) -> Vec<f32
 
         // Add additional offset to ensure the row starts with sync A bar
         fine_tuned_offset = fine_tuned_offset
-            .saturating_sub(ADDITIONAL_OFFSET)
+            .saturating_sub(additional_offset)
             .min(row_slice.len());
 
         // Circular shift from fine-tuned offset

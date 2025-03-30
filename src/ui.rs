@@ -1,6 +1,7 @@
-use crate::wav::compute_signal;
 use crate::app_state::AppState;
+use crate::settings::FunctionsSettings;
 use crate::ui_elements::UiElements;
+use crate::wav::compute_signal;
 
 use glib_macros::clone;
 use gtk4::{gdk, glib, prelude::*};
@@ -47,6 +48,8 @@ pub fn build_ui(app: &gtk4::Application) {
     let app_state = Rc::new(AppState::new(debug, benchmark_ram, benchmark_cpu));
     //Initialize object to hold UI elements
     let ui_elements = Rc::new(UiElements::new(app));
+    // Initialize object to hold settings
+    let settings = FunctionsSettings::new(&ui_elements);
 
     // Logic for filepicker
     ui_elements.button_open_file.connect_clicked(clone!(
@@ -81,9 +84,18 @@ pub fn build_ui(app: &gtk4::Application) {
         }
     ));
 
+    // Logic for settings button
+    ui_elements.button_settings.connect_clicked(clone!(
+        #[strong]
+        ui_elements,
+        move |_| {
+            ui_elements.present_settings();
+        }
+    ));
+
     // Logic for proceed button
     ui_elements.checkbox_sync.connect_toggled(clone!(
-        #[strong] 
+        #[strong]
         app_state,
         move |checkbox_sync| {
             println!("Sync: {}", checkbox_sync.is_active());
@@ -161,10 +173,12 @@ pub fn build_ui(app: &gtk4::Application) {
                                                     )));
                                                 } else {
                                                     eprintln!("Failed to write the model to file.");
-                                                if downloaded == total_size {
-                                                    println!("Model downloaded successfully.");
-                                                    ui_elements_clone.checkbox_sync.set_active(true);
-                                                }
+                                                    if downloaded == total_size {
+                                                        println!("Model downloaded successfully.");
+                                                        ui_elements_clone
+                                                            .checkbox_sync
+                                                            .set_active(true);
+                                                    }
                                                 }
                                             }
                                             Err(e) => {
@@ -195,7 +209,7 @@ pub fn build_ui(app: &gtk4::Application) {
                 }
             }
         }
-    ));  
+    ));
 
     // Logic for the proceed button
     ui_elements.button_proceed.connect_clicked(clone!(
@@ -203,14 +217,12 @@ pub fn build_ui(app: &gtk4::Application) {
         ui_elements,
         #[strong]
         app_state,
+        #[strong]
+        settings,
         move |_| {
             let filename = &ui_elements.text_box.text();
             if !filename.is_empty() {
-                let path = compute_signal(
-                    filename,
-                    &app_state,
-                    &ui_elements
-                );
+                let path = compute_signal(filename, &app_state, &ui_elements, &settings.borrow());
                 if !path.is_empty() {
                     let file = gio::File::for_path(&path);
                     ui_elements.picture_widget.set_file(Some(&file));
@@ -218,6 +230,6 @@ pub fn build_ui(app: &gtk4::Application) {
             }
         }
     ));
-    
+
     ui_elements.window.present();
 }
