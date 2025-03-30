@@ -110,8 +110,15 @@ pub fn build_ui(app: &gtk4::Application) {
         #[strong]
         ui_elements,
         move |checkbox| {
+            let is_active = checkbox.is_active();
             println!("Enhance image: {}", checkbox.is_active());
             app_state.use_model.set(checkbox.is_active());
+            
+            if is_active {
+                ui_elements
+                    .checkbox_use_sgbnr
+                    .set_active(false);
+            }
 
             if checkbox.is_active() {
                 let model_path = Path::new("model.onnx");
@@ -215,9 +222,18 @@ pub fn build_ui(app: &gtk4::Application) {
     ui_elements.checkbox_use_sgbnr.connect_toggled(clone!(
         #[strong]
         app_state,
+        #[strong]
+        ui_elements,
         move |checkbox| {
+            let is_active = checkbox.is_active();
             println!("Use SGBNR: {}", checkbox.is_active());
             app_state.use_sgbnr.set(checkbox.is_active());
+            
+            if is_active {
+                ui_elements
+                    .checkbox_use_model
+                    .set_active(false);
+            }
         }
     ));
 
