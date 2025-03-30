@@ -6,6 +6,7 @@ pub struct AppState {
     pub benchmark_cpu: bool,
     pub sync: Cell<bool>,
     pub use_model: Cell<bool>,
+    pub use_sgbnr: Cell<bool>,
     // You can add more shared state as needed: e.g., ProgressBar, etc.
 }
 
@@ -17,6 +18,7 @@ impl AppState {
             benchmark_cpu,
             sync: Cell::new(false),
             use_model: Cell::new(false),
+            use_sgbnr: Cell::new(false),
         }
     }
 }

@@ -211,6 +211,16 @@ pub fn build_ui(app: &gtk4::Application) {
         }
     ));
 
+    // Logic for use sgbnr checkbox
+    ui_elements.checkbox_use_sgbnr.connect_toggled(clone!(
+        #[strong]
+        app_state,
+        move |checkbox| {
+            println!("Use SGBNR: {}", checkbox.is_active());
+            app_state.use_sgbnr.set(checkbox.is_active());
+        }
+    ));
+
     // Logic for the proceed button
     ui_elements.button_proceed.connect_clicked(clone!(
         #[strong]

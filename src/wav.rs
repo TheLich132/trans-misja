@@ -1,4 +1,5 @@
 use crate::app_state::AppState;
+use crate::gaussian_blur;
 use crate::settings::FunctionsSettings;
 use crate::ui_elements::UiElements;
 
@@ -221,6 +222,36 @@ pub fn compute_signal(
         let model_path = "model.onnx";
         let enhanced_image_path =
             enhance_image_with_model(&path, model_path, settings.cpu_threads).unwrap();
+        ui_elements.progress_bar.set_fraction(1.0);
+        ui_elements
+            .progress_bar
+            .set_text(Some("Enhancement complete"));
+
+        push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
+        push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
+
+        // Stop timer
+        let duration = start.elapsed();
+
+        // Print benchmark results
+        println!("Time elapsed: {:?}", duration);
+        if app_state.benchmark_ram {
+            println!(
+                "Avg RAM usage: {:.2} MB",
+                ram_usage.iter().sum::<f32>() / ram_usage.len() as f32
+            );
+        }
+        if app_state.benchmark_cpu {
+            println!(
+                "Avg CPU usage: {:.2} %",
+                cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
+            );
+        }
+
+        enhanced_image_path
+    } else if app_state.use_sgbnr.get() {
+        println!("Enhancing image with SGBNR...");
+        let enhanced_image_path = gaussian_blur::selective_gaussian_blur(&path, settings).unwrap();
         ui_elements.progress_bar.set_fraction(1.0);
         ui_elements
             .progress_bar

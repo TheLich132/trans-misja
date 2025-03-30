@@ -2,6 +2,7 @@ use gtk4::glib;
 use gtk4::prelude::*;
 
 mod app_state;
+mod gaussian_blur;
 mod settings;
 mod settings_logic;
 mod ui;

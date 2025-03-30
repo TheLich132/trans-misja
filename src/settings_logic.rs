@@ -71,4 +71,73 @@ pub fn connect_settings_logic(ui_elements: &UiElements, settings: &Rc<RefCell<Fu
                 println!("CPU threads set to: {}", settings.borrow().cpu_threads);
             }
         ));
+
+    // Blur sigma settings
+    ui_elements
+        .blur_sigma_spinbutton
+        .connect_value_changed(clone!(
+            #[strong]
+            settings,
+            move |spin_button| {
+                settings.borrow_mut().blur_sigma = spin_button.value() as f32;
+                println!("Blur sigma set to: {}", settings.borrow().blur_sigma);
+            }
+        ));
+
+    // Brightness threshold settings
+    ui_elements
+        .brightness_threshold_spinbutton
+        .connect_value_changed(clone!(
+            #[strong]
+            settings,
+            move |spin_button| {
+                settings.borrow_mut().brightness_threshold = spin_button.value() as f32;
+                println!(
+                    "Brightness threshold set to: {}",
+                    settings.borrow().brightness_threshold
+                );
+            }
+        ));
+
+    // Noise threshold settings
+    ui_elements
+        .noise_threshold_spinbutton
+        .connect_value_changed(clone!(
+            #[strong]
+            settings,
+            move |spin_button| {
+                settings.borrow_mut().noise_threshold = spin_button.value() as f32;
+                println!(
+                    "Noise threshold set to: {}",
+                    settings.borrow().noise_threshold
+                );
+            }
+        ));
+
+    // Sharpen sigma settings
+    ui_elements
+        .sharpen_sigma_spinbutton
+        .connect_value_changed(clone!(
+            #[strong]
+            settings,
+            move |spin_button| {
+                settings.borrow_mut().sharpen_sigma = spin_button.value() as f32;
+                println!("Sharpen sigma set to: {}", settings.borrow().sharpen_sigma);
+            }
+        ));
+
+    // Sharpen threshold settings
+    ui_elements
+        .sharpen_threshold_spinbutton
+        .connect_value_changed(clone!(
+            #[strong]
+            settings,
+            move |spin_button| {
+                settings.borrow_mut().sharpen_threshold = spin_button.value() as i32;
+                println!(
+                    "Sharpen threshold set to: {}",
+                    settings.borrow().sharpen_threshold
+                );
+            }
+        ));
 }
