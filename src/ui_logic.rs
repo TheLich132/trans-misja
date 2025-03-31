@@ -56,6 +56,7 @@ pub fn build_ui(app: &gtk4::Application) {
         #[strong]
         ui_elements,
         move |_| {
+            let initial_folder = ui_elements.text_box.text();
             let file_dialog = gtk4::FileDialog::new();
             let filter = gtk4::FileFilter::new();
             filter.set_name(Some("WAV files"));
@@ -64,6 +65,10 @@ pub fn build_ui(app: &gtk4::Application) {
             filter_store.append(&filter);
             file_dialog.set_filters(Some(&filter_store));
             file_dialog.set_modal(true);
+            if !initial_folder.is_empty() {
+                let file = gio::File::for_path(&initial_folder);
+                file_dialog.set_initial_folder(Some(&file));
+            }
 
             file_dialog.open(
                 Some(&ui_elements.window),
