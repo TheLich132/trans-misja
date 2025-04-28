@@ -3,13 +3,13 @@ use gtk4::prelude::*;
 use std::env;
 
 mod app_state;
+mod console_command;
 mod gaussian_blur;
 mod settings;
 mod settings_logic;
-mod ui_logic;
 mod ui_elements;
+mod ui_logic;
 mod wav;
-mod console_command;
 
 const APP_ID: &str = "org.gtk-rs.trans-misja";
 

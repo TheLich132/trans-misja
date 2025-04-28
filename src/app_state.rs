@@ -1,12 +1,12 @@
-use std::cell::Cell;
+use std::sync::atomic::AtomicBool;
 
 pub struct AppState {
     pub debug: bool,
     pub benchmark_ram: bool,
     pub benchmark_cpu: bool,
-    pub sync: Cell<bool>,
-    pub use_model: Cell<bool>,
-    pub use_sgbnr: Cell<bool>,
+    pub sync: AtomicBool,
+    pub use_model: AtomicBool,
+    pub use_sgbnr: AtomicBool,
     // You can add more shared state as needed: e.g., ProgressBar, etc.
 }
 
@@ -16,9 +16,9 @@ impl AppState {
             debug,
             benchmark_ram,
             benchmark_cpu,
-            sync: Cell::new(false),
-            use_model: Cell::new(false),
-            use_sgbnr: Cell::new(false),
+            sync: AtomicBool::new(false),
+            use_model: AtomicBool::new(false),
+            use_sgbnr: AtomicBool::new(false),
         }
     }
 }

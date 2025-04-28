@@ -2,18 +2,21 @@ use crate::settings::FunctionsSettings;
 
 use image::imageops;
 use image::{ImageBuffer, Rgb};
+use std::sync::Arc;
+use std::sync::Mutex;
 
 pub fn selective_gaussian_blur(
     image_path: &str,
-    settings: &FunctionsSettings,
+    settings: &Arc<Mutex<FunctionsSettings>>,
 ) -> Result<String, String> {
     // Load the image and convert to RGB8
     let img = image::open(image_path).map_err(|e| e.to_string())?;
     let img = img.to_rgb8();
     let (width, height) = img.dimensions();
-    print!("Image dimensions: {}x{}\n", width, height);
+    println!("Image dimensions: {}x{}", width, height);
 
     // Create the blurred version of the image
+    let settings = settings.lock().map_err(|e| e.to_string())?;
     let blurred = imageops::blur(&img, settings.blur_sigma);
 
     // Thresholds for region detection:

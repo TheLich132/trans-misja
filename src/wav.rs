@@ -1,8 +1,8 @@
 use crate::app_state::AppState;
 use crate::gaussian_blur;
 use crate::settings::FunctionsSettings;
-use crate::ui_elements::UiElements;
 
+use async_channel::Sender;
 use hound::WavReader;
 use image::{GenericImageView, GrayImage, ImageBuffer, Luma};
 use ort::{
@@ -11,15 +11,16 @@ use ort::{
     value::Tensor,
 };
 use rayon::prelude::*;
-use std::time::Instant;
-use std::{error::Error, sync::Mutex};
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
+use std::{error::Error, sync::Arc, sync::Mutex};
 use sysinfo::{get_current_pid, Pid, System};
 
 pub fn compute_signal(
     filepath: &str,
     app_state: &AppState,
-    ui_elements: &UiElements,
-    settings: &FunctionsSettings,
+    settings: &Arc<Mutex<FunctionsSettings>>,
+    sender: &Sender<(f64, String)>,
 ) -> String {
     let mut ram_usage: Vec<f32> = Vec::new();
     let mut cpu_usage: Vec<f32> = Vec::new();
@@ -50,15 +51,12 @@ pub fn compute_signal(
         &app_state.debug,
         &app_state.benchmark_ram,
         &app_state.benchmark_cpu,
-        &app_state.sync.get(),
-        &app_state.use_model.get()
+        app_state.sync.load(Ordering::Relaxed),
+        app_state.use_model.load(Ordering::Relaxed)
     );
 
     // Update progress bar
-    ui_elements.progress_bar.set_fraction(0.1);
-    ui_elements
-        .progress_bar
-        .set_text(Some("Loading WAV file..."));
+    let _ = sender.try_send((0.1, String::from("Loading WAV file...")));
 
     /*
         Loading wav files with hound
@@ -114,10 +112,7 @@ pub fn compute_signal(
     push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    ui_elements.progress_bar.set_fraction(0.3);
-    ui_elements
-        .progress_bar
-        .set_text(Some("Processing samples..."));
+    let _ = sender.try_send((0.3, String::from("Processing samples...")));
 
     println!("Samples: {}", samples.len());
     for sample in samples.iter().take(100) {
@@ -133,8 +128,7 @@ pub fn compute_signal(
     push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    ui_elements.progress_bar.set_fraction(0.5);
-    ui_elements.progress_bar.set_text(Some("Resampling..."));
+    let _ = sender.try_send((0.5, String::from("Resampling...")));
 
     println!("Resampled samples: {}", resampled_samples.len());
     for sample in resampled_samples.iter().take(100) {
@@ -144,33 +138,28 @@ pub fn compute_signal(
 
     let frequency = target_sample_rate as f32;
 
-    let filtered_signal = low_pass_filter(&resampled_samples, settings.cutoff_freq, frequency);
+    let cutoff_freq = settings.lock().unwrap().cutoff_freq;
+    let filtered_signal = low_pass_filter(&resampled_samples, cutoff_freq, frequency);
 
     push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
     push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    ui_elements.progress_bar.set_fraction(0.7);
-    ui_elements
-        .progress_bar
-        .set_text(Some("Filtering signal..."));
+    let _ = sender.try_send((0.7, String::from("Filtering signal...")));
 
     println!("Demodulating...");
-    let am_signal = envelope_detection(
-        &filtered_signal,
-        settings.window_size,
-        settings.scaling_factor,
-    );
+    let window_size = settings.lock().unwrap().window_size;
+    let scaling_factor = settings.lock().unwrap().scaling_factor;
+    let am_signal = envelope_detection(&filtered_signal, window_size, scaling_factor);
 
     push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
     push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
     // Update progress bar
-    ui_elements.progress_bar.set_fraction(0.8);
-    ui_elements.progress_bar.set_text(Some("Demodulating..."));
+    let _ = sender.try_send((0.8, String::from("Demodulating...")));
 
     // APT Signal sync
-    let path: String = if app_state.sync.get() {
+    let path: String = if app_state.sync.load(Ordering::Relaxed) {
         println!("Syncing...");
         let frame_width = (frequency * 0.5) as usize;
 
@@ -181,12 +170,8 @@ pub fn compute_signal(
             -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0,
             -1.0, -1.0, -1.0, -1.0, -1.0,
         ];
-        let synced_signal = sync_apt(
-            &am_signal,
-            frame_width,
-            &sync_pattern,
-            settings.additional_offset,
-        );
+        let additional_offset = settings.lock().unwrap().additional_offset;
+        let synced_signal = sync_apt(&am_signal, frame_width, &sync_pattern, additional_offset);
 
         push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
         push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
@@ -212,20 +197,13 @@ pub fn compute_signal(
     };
 
     // Update progress bar
-    ui_elements.progress_bar.set_fraction(0.9);
-    ui_elements
-        .progress_bar
-        .set_text(Some("Generating image..."));
+    let _ = sender.try_send((0.9, String::from("Generating image...")));
 
-    if app_state.use_model.get() {
+    if app_state.use_model.load(Ordering::Relaxed) {
         println!("Enhancing image...");
         let model_path = "model.onnx";
-        let enhanced_image_path =
-            enhance_image_with_model(&path, model_path, settings.cpu_threads).unwrap();
-        ui_elements.progress_bar.set_fraction(1.0);
-        ui_elements
-            .progress_bar
-            .set_text(Some("Enhancement complete"));
+        let cpu_threads = settings.lock().unwrap().cpu_threads;
+        let enhanced_image_path = enhance_image_with_model(&path, model_path, cpu_threads).unwrap();
 
         push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
         push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
@@ -246,16 +224,16 @@ pub fn compute_signal(
                 "Avg CPU usage: {:.2} %",
                 cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
             );
+        }
+
+        while sender.try_send((1.0, enhanced_image_path.clone())).is_err() {
+            std::thread::sleep(Duration::from_millis(10));
         }
 
         enhanced_image_path
-    } else if app_state.use_sgbnr.get() {
+    } else if app_state.use_sgbnr.load(Ordering::Relaxed) {
         println!("Enhancing image with SGBNR...");
         let enhanced_image_path = gaussian_blur::selective_gaussian_blur(&path, settings).unwrap();
-        ui_elements.progress_bar.set_fraction(1.0);
-        ui_elements
-            .progress_bar
-            .set_text(Some("Enhancement complete"));
 
         push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
         push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
@@ -276,15 +254,14 @@ pub fn compute_signal(
                 "Avg CPU usage: {:.2} %",
                 cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
             );
+        }
+
+        while sender.try_send((1.0, enhanced_image_path.clone())).is_err() {
+            std::thread::sleep(Duration::from_millis(10));
         }
 
         enhanced_image_path
     } else {
-        ui_elements.progress_bar.set_fraction(1.0);
-        ui_elements
-            .progress_bar
-            .set_text(Some("Processing complete"));
-
         push_ram_usage(&app_state.benchmark_ram, &mut sys, &mut ram_usage, pid);
         push_cpu_usage(&app_state.benchmark_cpu, &mut sys, &mut cpu_usage, pid);
 
@@ -304,6 +281,10 @@ pub fn compute_signal(
                 "Avg CPU usage: {:.2} %",
                 cpu_usage.iter().sum::<f32>() / cpu_usage.len() as f32
             );
+        }
+
+        while sender.try_send((1.0, path.clone())).is_err() {
+            std::thread::sleep(Duration::from_millis(10));
         }
 
         path

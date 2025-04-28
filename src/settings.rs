@@ -1,8 +1,8 @@
 use crate::settings_logic::connect_settings_logic;
 use crate::ui_elements::UiElements;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 pub struct FunctionsSettings {
     //Low pass filter settings
@@ -23,9 +23,9 @@ pub struct FunctionsSettings {
 }
 
 impl FunctionsSettings {
-    pub fn new(ui_elements: &UiElements) -> Rc<RefCell<Self>> {
+    pub fn new(ui_elements: &UiElements) -> Arc<Mutex<Self>> {
         // Create instance with default values
-        let settings = Rc::new(RefCell::new(Self {
+        let settings = Arc::new(Mutex::new(Self {
             cutoff_freq: 5000.0,
             additional_offset: 120,
             window_size: 10,
@@ -43,8 +43,8 @@ impl FunctionsSettings {
         settings
     }
 
-    pub fn new_without_ui() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
+    pub fn new_without_ui() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
             cutoff_freq: 5000.0,
             additional_offset: 120,
             window_size: 10,

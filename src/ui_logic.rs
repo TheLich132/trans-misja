@@ -4,9 +4,17 @@ use crate::ui_elements::UiElements;
 use crate::wav::compute_signal;
 
 use glib_macros::clone;
-use gtk4::{gdk, glib, gio, prelude::*};
+use gtk4::{gdk, gio, glib, prelude::*};
 use reqwest::blocking::get;
-use std::{env, fs::File, io::{Read, Write}, path::Path, sync::Arc};
+use std::sync::atomic::Ordering;
+use std::{
+    env,
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+    rc::Rc,
+    sync::Arc,
+};
 
 const UNET_MODEL_URL: &str =
     "https://huggingface.co/TempUser123/NOAA_U-Net/resolve/main/model.onnx?download=true";
@@ -47,7 +55,7 @@ pub fn build_ui(app: &gtk4::Application) {
     // Use Rc to allow multiple ownership of the AppState object
     let app_state = Arc::new(AppState::new(debug, benchmark_ram, benchmark_cpu));
     //Initialize object to hold UI elements
-    let ui_elements = Arc::new(UiElements::new(app));
+    let ui_elements = Rc::new(UiElements::new(app));
     // Initialize object to hold settings
     let settings = FunctionsSettings::new(&ui_elements);
 
@@ -105,7 +113,9 @@ pub fn build_ui(app: &gtk4::Application) {
         app_state,
         move |checkbox_sync| {
             println!("Sync: {}", checkbox_sync.is_active());
-            app_state.sync.set(checkbox_sync.is_active());
+            app_state
+                .sync
+                .store(checkbox_sync.is_active(), Ordering::SeqCst);
         }
     ));
 
@@ -119,7 +129,9 @@ pub fn build_ui(app: &gtk4::Application) {
             let sender = sender.clone();
             let is_active = checkbox.is_active();
             println!("Enhance image: {}", checkbox.is_active());
-            app_state.use_model.set(checkbox.is_active());
+            app_state
+                .use_model
+                .store(checkbox.is_active(), Ordering::SeqCst);
 
             if is_active {
                 ui_elements.checkbox_use_sgbnr.set_active(false);
@@ -160,44 +172,72 @@ pub fn build_ui(app: &gtk4::Application) {
                     let ui_elements_clone = ui_elements.clone();
 
                     // await the user's response before proceeding
-                    glib::MainContext::default().spawn_local(async move {
-                        if let Ok(answer) = dialog_clone.choose_future(Some(&ui_elements_clone.window)).await {
-                            if answer == 0 {
-                                // offload the blocking download to the thread pool
-                                gio::spawn_blocking(move || {
-                                    let mut downloaded: u64 = 0;
-                                    if let Ok(mut resp) = get(UNET_MODEL_URL) {
-                                        if resp.status().is_success() {
-                                            let total = resp.content_length().unwrap_or(0);
-                                            if let Ok(mut file) = File::create("model.onnx") {
-                                                let mut buf = [0u8; 8192];
-                                                // read in chunks
-                                                loop {
-                                                    match resp.read(&mut buf) {
-                                                        Ok(0) => break,
-                                                        Ok(n) => {
-                                                            downloaded += n as u64;
-                                                            if file.write_all(&buf[..n]).is_ok() {
-                                                                let fraction = downloaded as f64 / total as f64;
-                                                                let text = format!("Downloading... {:.0}%", fraction * 100.0);
-                                                                let _ = sender_clone.try_send((fraction, text));
+                    glib::MainContext::default().spawn_local(clone!(
+                        #[strong]
+                        progress_window,
+                        async move {
+                            if let Ok(answer) = dialog_clone
+                                .choose_future(Some(&ui_elements_clone.window))
+                                .await
+                            {
+                                if answer == 0 {
+                                    // offload the blocking download to the thread pool
+                                    gio::spawn_blocking(move || {
+                                        let mut downloaded: u64 = 0;
+                                        if let Ok(mut resp) = get(UNET_MODEL_URL) {
+                                            if resp.status().is_success() {
+                                                let total = resp.content_length().unwrap_or(0);
+                                                if let Ok(mut file) = File::create("model.onnx") {
+                                                    let mut buf = [0u8; 8192];
+                                                    // read in chunks
+                                                    loop {
+                                                        match resp.read(&mut buf) {
+                                                            Ok(0) => break,
+                                                            Ok(n) => {
+                                                                downloaded += n as u64;
+                                                                if file.write_all(&buf[..n]).is_ok()
+                                                                {
+                                                                    let fraction = downloaded
+                                                                        as f64
+                                                                        / total as f64;
+                                                                    let text = format!(
+                                                                        "Downloading... {:.0}%",
+                                                                        fraction * 100.0
+                                                                    );
+                                                                    let _ = sender_clone
+                                                                        .try_send((fraction, text));
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                eprintln!(
+                                                                    "Error reading chunk: {}",
+                                                                    e
+                                                                );
+                                                                break;
                                                             }
                                                         }
-                                                        Err(e) => {
-                                                            eprintln!("Error reading chunk: {}", e);
-                                                            break;
-                                                        }
+                                                    }
+                                                    // final update
+                                                    while sender_clone
+                                                        .try_send((1.0, "Download complete".into()))
+                                                        .is_err()
+                                                    {
+                                                        std::thread::sleep(
+                                                            std::time::Duration::from_millis(10),
+                                                        );
                                                     }
                                                 }
-                                                // final update
-                                                let _ = sender_clone.try_send((1.0, "Download complete".into()));
                                             }
                                         }
-                                    }
-                                });
+                                    });
+                                } else {
+                                    // User chose not to download the model
+                                    progress_window.close();
+                                    ui_elements_clone.checkbox_use_model.set_active(false);
+                                }
                             }
                         }
-                    });
+                    ));
 
                     // Update the progress bar with the download progress
                     let ui_elements_clone = ui_elements.clone();
@@ -228,13 +268,17 @@ pub fn build_ui(app: &gtk4::Application) {
         move |checkbox| {
             let is_active = checkbox.is_active();
             println!("Use SGBNR: {}", checkbox.is_active());
-            app_state.use_sgbnr.set(checkbox.is_active());
+            app_state
+                .use_sgbnr
+                .store(checkbox.is_active(), Ordering::SeqCst);
 
             if is_active {
                 ui_elements.checkbox_use_model.set_active(false);
             }
         }
     ));
+
+    let (sender, receiver) = async_channel::bounded(1);
 
     // Logic for the proceed button
     ui_elements.button_proceed.connect_clicked(clone!(
@@ -245,14 +289,48 @@ pub fn build_ui(app: &gtk4::Application) {
         #[strong]
         settings,
         move |_| {
-            let filename = &ui_elements.text_box.text();
+            let sender = sender.clone();
+            let filename = ui_elements.text_box.text().to_string();
             if !filename.is_empty() {
-                let path = compute_signal(filename, &app_state, &ui_elements, &settings.borrow());
-                if !path.is_empty() {
-                    let file = gio::File::for_path(&path);
-                    ui_elements.picture_widget.set_file(Some(&file));
-                }
+                gio::spawn_blocking(clone!(
+                    #[strong]
+                    app_state,
+                    #[strong]
+                    settings,
+                    move || {
+                        let app_state = app_state.clone();
+                        let settings = settings.clone();
+                        let filename = filename.to_string();
+                        // Call the function to enhance the image with the model
+                        compute_signal(&filename, &app_state, &settings, &sender);
+                    }
+                ));
             }
+
+            // update progress bar with processing progress
+            let ui_elements_clone = ui_elements.clone();
+            let progress_rx = receiver.clone();
+            glib::MainContext::default().spawn_local(async move {
+                ui_elements_clone.button_proceed.set_sensitive(false);
+                while let Ok((fraction, text)) = progress_rx.recv().await {
+                    if fraction >= 1.0 {
+                        ui_elements_clone
+                            .progress_bar
+                            .set_text(Some("Processing complete"));
+                        ui_elements_clone.progress_bar.set_fraction(1.0);
+                        ui_elements_clone.button_proceed.set_sensitive(true);
+
+                        let path = text;
+                        if !path.is_empty() {
+                            let file = gio::File::for_path(&path);
+                            ui_elements_clone.picture_widget.set_file(Some(&file));
+                        }
+                        break;
+                    }
+                    ui_elements_clone.progress_bar.set_fraction(fraction);
+                    ui_elements_clone.progress_bar.set_text(Some(&text));
+                }
+            });
         }
     ));
 
