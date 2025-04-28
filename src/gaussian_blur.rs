@@ -11,6 +11,7 @@ pub fn selective_gaussian_blur(
     let img = image::open(image_path).map_err(|e| e.to_string())?;
     let img = img.to_rgb8();
     let (width, height) = img.dimensions();
+    print!("Image dimensions: {}x{}\n", width, height);
 
     // Create the blurred version of the image
     let blurred = imageops::blur(&img, settings.blur_sigma);
@@ -45,6 +46,7 @@ pub fn selective_gaussian_blur(
 
     // Save the resulting image
     let output_path = format!("selective_blur_{}", image_path);
+    println!("Saving output image to: {}", output_path);
     output.save(&output_path).map_err(|e| e.to_string())?;
     Ok(output_path)
 }

@@ -42,4 +42,19 @@ impl FunctionsSettings {
 
         settings
     }
+
+    pub fn new_without_ui() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            cutoff_freq: 5000.0,
+            additional_offset: 120,
+            window_size: 10,
+            scaling_factor: 2.5,
+            cpu_threads: 1,
+            blur_sigma: 8.0,
+            brightness_threshold: 5.0,
+            noise_threshold: 27.5,
+            sharpen_sigma: 1.5,
+            sharpen_threshold: 5,
+        }))
+    }
 }

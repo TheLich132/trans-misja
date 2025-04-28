@@ -554,7 +554,7 @@ fn generate_image(
     Ok(String::from("image.png"))
 }
 
-fn enhance_image_with_model(
+pub fn enhance_image_with_model(
     image_path: &str,
     model_path: &str,
     cpu_threads: usize,
