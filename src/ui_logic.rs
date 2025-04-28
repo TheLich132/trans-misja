@@ -4,9 +4,9 @@ use crate::ui_elements::UiElements;
 use crate::wav::compute_signal;
 
 use glib_macros::clone;
-use gtk4::{gdk, glib, prelude::*};
+use gtk4::{gdk, glib, gio, prelude::*};
 use reqwest::blocking::get;
-use std::{env, fs::File, io::Write, path::Path, rc::Rc};
+use std::{env, fs::File, io::{Read, Write}, path::Path, sync::Arc};
 
 const UNET_MODEL_URL: &str =
     "https://huggingface.co/TempUser123/NOAA_U-Net/resolve/main/model.onnx?download=true";
@@ -45,12 +45,13 @@ pub fn build_ui(app: &gtk4::Application) {
 
     // Initialize object to hold shared state
     // Use Rc to allow multiple ownership of the AppState object
-    let app_state = Rc::new(AppState::new(debug, benchmark_ram, benchmark_cpu));
+    let app_state = Arc::new(AppState::new(debug, benchmark_ram, benchmark_cpu));
     //Initialize object to hold UI elements
-    let ui_elements = Rc::new(UiElements::new(app));
+    let ui_elements = Arc::new(UiElements::new(app));
     // Initialize object to hold settings
     let settings = FunctionsSettings::new(&ui_elements);
 
+    let (sender, receiver) = async_channel::bounded(1);
     // Logic for filepicker
     ui_elements.button_open_file.connect_clicked(clone!(
         #[strong]
@@ -115,14 +116,13 @@ pub fn build_ui(app: &gtk4::Application) {
         #[strong]
         ui_elements,
         move |checkbox| {
+            let sender = sender.clone();
             let is_active = checkbox.is_active();
             println!("Enhance image: {}", checkbox.is_active());
             app_state.use_model.set(checkbox.is_active());
-            
+
             if is_active {
-                ui_elements
-                    .checkbox_use_sgbnr
-                    .set_active(false);
+                ui_elements.checkbox_use_sgbnr.set_active(false);
             }
 
             if checkbox.is_active() {
@@ -133,8 +133,6 @@ pub fn build_ui(app: &gtk4::Application) {
                         .buttons(["Yes", "No"])
                         .modal(true)
                         .build();
-
-                    let answer = dialog.choose_future(Some(&ui_elements.window));
 
                     let progress_window = gtk4::Window::builder()
                         .title("Downloading Model")
@@ -156,67 +154,65 @@ pub fn build_ui(app: &gtk4::Application) {
                     progress_window.set_child(Some(&progress_bar));
                     progress_window.present();
 
+                    // clone needed values for async/blocked tasks
+                    let dialog_clone = dialog.clone();
+                    let sender_clone = sender.clone();
                     let ui_elements_clone = ui_elements.clone();
+
+                    // await the user's response before proceeding
                     glib::MainContext::default().spawn_local(async move {
-                        match answer.await {
-                            Ok(0) => {
-                                println!("Downloading the model...");
-                                match get(UNET_MODEL_URL) {
-                                    Ok(response) if response.status().is_success() => {
-                                        let total_size = response.content_length().unwrap_or(0);
-                                        match File::create("model.onnx") {
-                                            Ok(mut file) => {
-                                                let mut downloaded: u64 = 0;
-                                                let content = match response.bytes() {
-                                                    Ok(bytes) => bytes,
-                                                    Err(_) => {
-                                                        eprintln!("Failed to read response bytes.");
-                                                        return;
-                                                    }
-                                                };
-                                                if file.write_all(&content).is_ok() {
-                                                    downloaded += content.len() as u64;
-                                                    let progress =
-                                                        downloaded as f64 / total_size as f64;
-                                                    progress_bar.set_fraction(progress);
-                                                    progress_bar.set_text(Some(&format!(
-                                                        "Downloading... {:.0}%",
-                                                        progress * 100.0
-                                                    )));
-                                                } else {
-                                                    eprintln!("Failed to write the model to file.");
-                                                    if downloaded == total_size {
-                                                        println!("Model downloaded successfully.");
-                                                        ui_elements_clone
-                                                            .checkbox_sync
-                                                            .set_active(true);
+                        if let Ok(answer) = dialog_clone.choose_future(Some(&ui_elements_clone.window)).await {
+                            if answer == 0 {
+                                // offload the blocking download to the thread pool
+                                gio::spawn_blocking(move || {
+                                    let mut downloaded: u64 = 0;
+                                    if let Ok(mut resp) = get(UNET_MODEL_URL) {
+                                        if resp.status().is_success() {
+                                            let total = resp.content_length().unwrap_or(0);
+                                            if let Ok(mut file) = File::create("model.onnx") {
+                                                let mut buf = [0u8; 8192];
+                                                // read in chunks
+                                                loop {
+                                                    match resp.read(&mut buf) {
+                                                        Ok(0) => break,
+                                                        Ok(n) => {
+                                                            downloaded += n as u64;
+                                                            if file.write_all(&buf[..n]).is_ok() {
+                                                                let fraction = downloaded as f64 / total as f64;
+                                                                let text = format!("Downloading... {:.0}%", fraction * 100.0);
+                                                                let _ = sender_clone.try_send((fraction, text));
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!("Error reading chunk: {}", e);
+                                                            break;
+                                                        }
                                                     }
                                                 }
-                                            }
-                                            Err(e) => {
-                                                eprintln!("Failed to create the model file: {}", e)
+                                                // final update
+                                                let _ = sender_clone.try_send((1.0, "Download complete".into()));
                                             }
                                         }
                                     }
-                                    Ok(response) => eprintln!(
-                                        "Failed to download the model. HTTP Status: {}",
-                                        response.status()
-                                    ),
-                                    Err(e) => eprintln!(
-                                        "Failed to send the request to download the model: {}",
-                                        e
-                                    ),
-                                }
+                                });
                             }
-                            Ok(1) => {
-                                ui_elements_clone.checkbox_use_model.set_active(false);
-                            }
-                            Err(e) => {
-                                eprintln!("Error occurred while awaiting dialog response: {}", e)
-                            }
-                            _ => {}
                         }
-                        progress_window.close();
+                    });
+
+                    // Update the progress bar with the download progress
+                    let ui_elements_clone = ui_elements.clone();
+                    let progress_window_clone = progress_window.clone();
+                    let progress_rx = receiver.clone();
+                    glib::MainContext::default().spawn_local(async move {
+                        while let Ok((fraction, text)) = progress_rx.recv().await {
+                            progress_bar.set_fraction(fraction);
+                            progress_bar.set_text(Some(&text));
+                            if fraction >= 1.0 {
+                                progress_window_clone.close();
+                                ui_elements_clone.checkbox_use_model.set_active(true);
+                                break;
+                            }
+                        }
                     });
                 }
             }
@@ -233,11 +229,9 @@ pub fn build_ui(app: &gtk4::Application) {
             let is_active = checkbox.is_active();
             println!("Use SGBNR: {}", checkbox.is_active());
             app_state.use_sgbnr.set(checkbox.is_active());
-            
+
             if is_active {
-                ui_elements
-                    .checkbox_use_model
-                    .set_active(false);
+                ui_elements.checkbox_use_model.set_active(false);
             }
         }
     ));
