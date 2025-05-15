@@ -1,6 +1,8 @@
+use adw::prelude::*;
+use adw::{ApplicationWindow, HeaderBar};
 use gtk4::{
-    prelude::*, ApplicationWindow, Box, Button, CheckButton, Entry, HeaderBar, Label, Picture,
-    ProgressBar, SpinButton, Stack, StackSwitcher, Window,
+    Box, Button, CheckButton, Entry, Label, Picture, ProgressBar, SpinButton, Stack, StackSwitcher,
+    Window,
 };
 use sysinfo::System;
 
@@ -31,13 +33,14 @@ pub struct UiElements {
 }
 
 impl UiElements {
-    pub fn new(app: &gtk4::Application) -> Self {
-        let window = gtk4::ApplicationWindow::builder()
+    pub fn new(app: &adw::Application) -> Self {
+        let window = ApplicationWindow::builder()
             .application(app)
             .title("trans-misja")
             .default_width(800)
             .default_height(600)
-            .resizable(true)
+            .content_width(800)
+            .content_height(600)
             .build();
 
         let text_box = Entry::new();
@@ -47,21 +50,22 @@ impl UiElements {
 
         let button_proceed = Button::with_label("Proceed");
         button_proceed.set_sensitive(false);
+        button_proceed.add_css_class("suggested-action");
 
         let button_open_file = Button::with_label("Open File");
 
         let button_settings = Button::with_label("Settings");
 
-        let checkbox_sync = gtk4::CheckButton::with_label("Sync");
+        let checkbox_sync = CheckButton::with_label("Sync");
         checkbox_sync.set_active(false);
 
-        let checkbox_use_model = gtk4::CheckButton::with_label("Enhance image (U-Net)");
+        let checkbox_use_model = CheckButton::with_label("Enhance image (U-Net)");
         checkbox_use_model.set_active(false);
 
-        let checkbox_use_sgbnr = gtk4::CheckButton::with_label("Enhance image (SGBNR)");
+        let checkbox_use_sgbnr = CheckButton::with_label("Enhance image (SGBNR)");
         checkbox_use_sgbnr.set_active(false);
 
-        let main_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+        let main_vbox = Box::new(gtk4::Orientation::Vertical, 12);
         main_vbox.set_hexpand(true);
         main_vbox.set_vexpand(true);
 
@@ -78,7 +82,7 @@ impl UiElements {
         top_grid.attach(&button_open_file, 3, 0, 1, 1);
         button_open_file.set_hexpand(false);
 
-        let checkbox_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+        let checkbox_box = Box::new(gtk4::Orientation::Horizontal, 12);
         checkbox_box.append(&checkbox_sync);
         checkbox_box.append(&checkbox_use_model);
         checkbox_box.append(&checkbox_use_sgbnr);
@@ -89,13 +93,13 @@ impl UiElements {
 
         main_vbox.append(&top_grid);
 
-        let picture_widget = gtk4::Picture::new();
+        let picture_widget = Picture::new();
         picture_widget.set_hexpand(true);
         picture_widget.set_vexpand(true);
 
         main_vbox.append(&picture_widget);
 
-        let progress_bar = gtk4::ProgressBar::new();
+        let progress_bar = ProgressBar::new();
         progress_bar.set_margin_bottom(12);
         progress_bar.set_margin_start(12);
         progress_bar.set_margin_end(12);
@@ -105,7 +109,7 @@ impl UiElements {
 
         main_vbox.append(&progress_bar);
 
-        window.set_child(Some(&main_vbox));
+        window.set_content(Some(&main_vbox));
 
         //****************
         // Settings window
