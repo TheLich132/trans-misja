@@ -1,5 +1,5 @@
+use adw::prelude::*;
 use gtk4::glib;
-use gtk4::prelude::*;
 use std::env;
 
 mod app_state;
@@ -24,7 +24,7 @@ fn main() -> glib::ExitCode {
         return glib::ExitCode::SUCCESS;
     }
 
-    let app = gtk4::Application::builder().application_id(APP_ID).build();
+    adw::init().expect("Failed to initialize libadwaita");
+    let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(ui_logic::build_ui);
     app.run()
-}
